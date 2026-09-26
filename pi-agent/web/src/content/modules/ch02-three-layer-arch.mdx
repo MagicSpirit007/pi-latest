@@ -4,12 +4,13 @@ module: M02
 displayOrder: 2
 status: published
 variant: ts
+sourceVersion: "0.87.1"
 summary: Pi-Agent 的三层架构：pi-ai 抽象模型、agent-core 提供运行时、coding-agent 包装交互。
 prev: ch01-overview
 next: ch03-agent-loop
 diagrams:
-  - id: 260702-ch02-type-progression
-    file: /assets/260702-ch02-type-progression.svg
+  - id: 260925-ch02-type-progression
+    file: /assets/260925-ch02-type-progression.svg
     caption: 三层类型递进扩展
 counterpart: ch02-three-layer-arch.python
 ---
@@ -29,30 +30,31 @@ import Diagram from '../../components/Diagram.astro';
 ```
 repo/
 ├── packages/
-│   ├── ai/              ← @earendil-works/pi-ai
-│   ├── agent/           ← @earendil-works/pi-agent-core
-│   ├── coding-agent/    ← @earendil-works/pi-coding-agent
-│   ├── orchestrator/    ← @earendil-works/pi-orchestrator（实验性，多 Agent 编排）
-│   └── tui/             ← @earendil-works/pi-tui
-├── package.json         ← 根配置，npm workspaces
+│   ├── ai/              ← 模型、Provider 与 API 适配
+│   ├── agent/           ← Agent 循环、Harness 与会话基础设施
+│   ├── coding-agent/    ← 编码产品与 SDK
+│   ├── tui/             ← 终端界面
+│   ├── chord/           ← 服务、状态、RPC 与插件的组合运行时
+│   ├── telemetry/       ← 遥测契约
+│   ├── durable/         ← 持久化 conversation / task / document
+│   ├── protocol/        ← 远程会话协议
+│   ├── client/          ← 远程客户端
+│   ├── server/          ← 实验性服务端
+│   ├── session-backends/← 会话存储后端
+│   └── evals/           ← 评估
+├── package.json         ← npm workspaces
 └── tsconfig.json
 ```
 
-五个包，整整齐齐排成一排。
+目录比早期版本热闹多了。但别急着把每个包都读一遍——**包地图和学习路线不是一回事**。
 
-> 注 1：历史上还存在过 `pi-web-ui`（浏览器端 Lit 组件库），但官方已于 2026-05-20 在 commit `b141e1fa` 中移除该 workspace，当前仓库不再包含此包。
->
-> 注 2：`pi-orchestrator` 为 v0.80.x 新增的实验性编排包，依赖 `pi-coding-agent`，负责多 Agent 协调、RPC 进程通信与 Supervisor 监控。它属于**外围编排层**，不在"核心三件套"的学习主线里，本模块末尾单独说明。
-
-如果你做过 Node.js 项目，大概率用过 monorepo（把多个包放在一个仓库里管理）。Pi 用的就是标准的 npm workspaces 方案——根目录的 `package.json` 里声明了 `"workspaces": ["packages/*"]`，npm 会自动把 `packages/` 下的每个子目录当作一个独立的包来管理。
-
-但这不是重点。重点是：**为什么是五个包（其中四个构成核心三件套的延伸，一个是外围编排层）？它们之间的关系是什么？能不能合并？**
-
-要回答这个问题，我们需要先搞清楚每个包到底在干什么。
+本书沿默认 SDK 的实际调用链展开：`createAgentSession → AgentSession → Agent → agentLoop`。先看 ai、agent、coding-agent 三层，再把显示和其他基础设施放到旁边。这样既不会把整个仓库误认成三个包，也不会在第一天就迷失在新目录里。
 
 ---
 
-## 2. 五个包，各管各的
+
+
+## 2. 主线上的包，各管各的
 
 先不要管依赖关系，我们从每个包自己的视角看它在做什么。
 
@@ -66,14 +68,15 @@ repo/
 
 具体来说，它做了三件事：
 
-1. **定义统一的类型**：不管你用 OpenAI、Anthropic、Google 还是 AWS Bedrock，消息格式都是一样的——`UserMessage`、`AssistantMessage`、`ToolResultMessage`，模型定义都是 `Model<TApi>`
-2. **统一流式调用**：所有提供商的调用方式统一成一个 `streamSimple()` 函数，返回一个 `AssistantMessageEventStream`（可以逐 token 读取的流）
-3. **适配 30+ 提供商**：支持从 OpenAI、Claude、Gemini 到 DeepSeek、Groq、小米等 30 多个提供商，每个提供商一个适配器文件
+1. **定义统一的类型**：不管你用 OpenAI、Anthropic、Google 还是 AWS Bedrock，消息格式都是一样的——`SystemMessage`、`UserMessage`、`AssistantMessage`、`ToolResultMessage`，模型定义都是 `Model<TApi>`
+2. **统一流式调用**：Provider 经过 `Models` 对象组合，也可以通过 `/compat` 的 `streamSimple()` 函数调用，返回一个 `AssistantMessageEventStream`（可以逐 token 读取的流）
+3. **组合多个提供商**：Provider 负责目录和认证，API 适配器负责协议；多个 Provider 可以共用同一种 API，不能把两者按文件一一对应
 
 你看它的 `index.ts` 导出了什么就知道了：
 
 ```typescript
-// packages/ai/src/index.ts（v0.80.x 节选）
+// 教学简化：省略外围定义，展示数据形状或关键步骤
+// packages/ai/src/index.ts（v0.87.1 节选）
 // 顶部注释明确写：Core only, side-effect free: no generated catalogs,
 // no provider factories, no api-registry, no OAuth implementations, no compat.
 // 全局 API 注册表、stream/complete 函数等已迁至 ./compat.ts（packages/ai/src/compat.ts）
@@ -85,13 +88,13 @@ export * from "./auth/credential-store.ts"
 export * from "./auth/helpers.ts"
 export * from "./auth/types.ts"
 export * from "./images-models.ts"
-export * from "./models.ts"              // 模型定义（KnownProvider 35 个）
+export * from "./models.ts"              // 模型定义与 Models 组合器
 export * from "./types.ts"               // 统一类型
 export * from "./utils/event-stream.ts"  // 事件流基类
 // 流式调用入口（stream / streamSimple）实际位于 ./compat.ts
 ```
 
-没有 "agent"（代理）、没有 "tool"（工具）、没有 "loop"（循环）。它只管一件事：**把 LLM API 的差异抹平，对外暴露一套统一的接口**。
+它定义了工具声明，却不执行工具，也不替你决定要循环几轮。它只管一件事：**把 LLM API 的差异抹平，对外暴露一套统一的接口**。
 
 ### 2.2 pi-agent-core：管"跑循环"
 
@@ -106,20 +109,21 @@ export * from "./utils/event-stream.ts"  // 事件流基类
 - 怎么维护对话状态（`AgentState`）
 - 怎么跑一个"调用 LLM → 执行工具 → 再调用 LLM"的循环（`agentLoop`）
 - 怎么在循环过程中发出事件，让外部知道发生了什么（`AgentEvent`）
-- 怎么管理会话历史、做上下文压缩（`Session`、`compact`）
+- 同一个包还导出 Harness、Session 与压缩基础设施；这些不等于 `Agent` 类自动带上的产品能力
 
 看它的 `index.ts` 导出：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 // packages/agent/src/index.ts（节选）
-export * from "./agent.js"               // Agent 类
-export * from "./agent-loop.js"          // 循环函数
-export * from "./harness/session/..."    // 会话管理
-export * from "./harness/compaction/..." // 上下文压缩
-export * from "./types.js"              // 类型定义
+export * from "./agent.ts"               // Agent 类
+export * from "./agent-loop.ts"          // 循环函数
+export * from "./harness/session/index.ts"    // 会话管理
+// 还按名称导出 Harness 的压缩与分支摘要函数
+export * from "./types.ts"              // 类型定义
 ```
 
-没有 "read"（读文件）、没有 "bash"（执行命令）、没有 "edit"（编辑代码）。它不关心具体做什么事，只关心"怎么把一个 Agent 跑起来"。
+`Agent` 循环通过工具接口工作，不硬编码 read 或 bash。不过包里还包含供 Harness 使用的文件和 shell 工具。**类的职责和整个包的导出范围要分开看**，否则会把另一条实现路径误塞进当前调用链。
 
 ### 2.3 pi-coding-agent：管"具体业务"
 
@@ -129,9 +133,9 @@ export * from "./types.js"              // 类型定义
 
 > "Coding agent CLI with read, bash, edit, write tools and session management"（编程 Agent CLI，提供读、执行、编辑、写工具和会话管理）
 
-这一层是最"厚"的——上百个源文件，比前两层加起来还多。因为它知道所有具体的事：
+这一层是最"厚"的——包含大量产品代码。因为它知道所有具体的事：
 
-- 7 个编程工具（read、bash、edit、write、grep、find、ls）怎么实现
+- 8 种内置工具（read、bash、powershell、edit、write、grep、find、ls），以及默认启用的 4 个工具怎么实现
 - 扩展系统怎么加载和运行
 - 会话怎么持久化到磁盘
 - CLI 怎么解析参数、怎么在终端渲染输出
@@ -140,9 +144,12 @@ export * from "./types.js"              // 类型定义
 它的入口是 `cli.ts`，用户在终端输入 `pi` 命令时，就从这里启动：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 // packages/coding-agent/src/cli.ts
 #!/usr/bin/env node
-import { main } from "./main.js";
+import { setupCli } from "./cli/setup.ts";
+import { main } from "./main.ts";
+setupCli();
 main(process.argv.slice(2));
 ```
 
@@ -151,9 +158,9 @@ main(process.argv.slice(2));
 ```
 你输入: pi "帮我改个 bug"
 │
-├── cli.ts          ← 解析命令行参数
+├── cli.ts          ← 设置 CLI 环境，进入 main
 │   └── main.ts     ← 创建会话、选择运行模式（交互/打印/RPC）
-│       └── AgentSession    ← 组装工具、加载扩展
+│       └── createAgentSession() ← 创建 ModelRuntime、资源与 AgentSession
 │           └── Agent       ← 管理状态、跑循环
 │               └── agentLoop()  ← 核心循环开始
 ```
@@ -166,24 +173,19 @@ main(process.argv.slice(2));
 
 这个包和"Agent 怎么工作"没有直接关系，它只是负责把 Agent 的工作过程展示给用户看。后面的学习中我们不会深入这一层。
 
-### 2.5 pi-orchestrator：管"多 Agent 编排"（实验性）
+### 2.5 旁边的新基础设施：先认路，不抢主线
 
-`@earendil-works/pi-orchestrator`（源码在 `packages/orchestrator/`）是 v0.80.x 新增的**实验性**包，解决的问题是：**怎么让多个 coding-agent 协同工作？**
+`chord` 提供服务、状态、RPC 和插件的组合机制；`telemetry` 定义观测契约；`durable` 处理持久化的 conversation、task 和 document。远程会话则另有 protocol、client 和实验性 server。
 
-它的核心由几个文件组成：
+还有一处容易走错：agent 包同时导出 `Agent` 和 `AgentHarness`。v0.87.1 的 Harness 已有独立运行时和会话模型，不能沿用旧版“只是未实现脚手架”的说法；但默认 `createAgentSession()` 仍然创建 `Agent`，会话由 coding-agent 的 `SessionManager` 管理。
 
-- `supervisor.ts` —— 监控者，管理子 Agent 的生命周期
-- `rpc-process.ts` —— 基于 RPC 的进程间通信
-- `radius.ts` —— 编排范围/边界控制
-- `serve.ts` / `storage.ts` —— 服务暴露与状态持久化
-
-注意它的定位：它**依赖 `pi-coding-agent`**，站在 coding-agent 之上，本身不实现任何 Agent 内核逻辑（循环、状态、压缩仍由 agent-core 提供）。它只是把若干个 coding-agent 实例"编"起来，让它们可以分工、通信、被监督。
-
-> ⚠️ 这是实验性能力，API 和文件结构都可能调整。学习主线只看核心三件套（ai / agent-core / coding-agent）即可，orchestrator 留到进阶阶段再接触。
+后面讲一次普通 SDK 请求时，我们始终跟这条主线。第 10 章再对照两套会话实现，理解它们各自负责什么。新增包的存在，不意味着默认 CLI 已经全部迁移过去。
 
 ---
 
-## 3. 看完五个包，你大概有了直觉
+
+
+## 3. 看完这些包，你大概有了直觉
 
 读完上面那一段，你脑子里可能已经有了一个画面：
 
@@ -193,10 +195,10 @@ main(process.argv.slice(2));
 │  （工具、扩展、CLI、会话持久化）               │
 ├─────────────────────────────────────────────┤
 │  pi-agent-core：我知道怎么跑 Agent            │  ← 只懂框架
-│  （循环、状态、事件、压缩）                    │
+│  （循环、状态、事件）                    │
 ├─────────────────────────────────────────────┤
 │  pi-ai：我知道怎么调模型                      │  ← 只懂模型
-│  （统一 API、流式调用、30+ 提供商适配）        │
+│  （统一 API、流式调用、多提供商适配）        │
 └─────────────────────────────────────────────┘
 
 旁边还有一个独立的 UI 包：
@@ -220,9 +222,9 @@ main(process.argv.slice(2));
 ```json
 // packages/coding-agent/package.json
 "dependencies": {
-    "@earendil-works/pi-agent-core": "^0.80.2",   // ← 依赖中间层，合理
-    "@earendil-works/pi-ai": "^0.80.2",            // ← 也直接依赖底层？
-    "@earendil-works/pi-tui": "^0.80.2",
+    "@earendil-works/pi-agent-core": "^0.87.1",   // ← 依赖中间层，合理
+    "@earendil-works/pi-ai": "^0.87.1",            // ← 也直接依赖底层？
+    "@earendil-works/pi-tui": "^0.87.1",
     // ... 其他依赖
 }
 ```
@@ -236,13 +238,14 @@ coding-agent **直接依赖了 pi-ai**，而不是只通过 pi-agent-core 间接
 打开 `packages/agent/src/types.ts` 的第一行，你会看到：
 
 ```typescript
-// packages/agent/src/types.ts:1-14
+// 教学简化：省略外围定义，展示数据形状或关键步骤
+// packages/agent/src/types.ts
 import type {
     Api,
     AssistantMessage,
     AssistantMessageEvent,
     AssistantMessageEventStream,
-    Context,
+    TranscriptContext,
     ImageContent,
     Message,
     Model,
@@ -267,9 +270,9 @@ pi-agent-core 的类型定义里，大量基础类型都是从 pi-ai 导入的�
 
 | 包 | 依赖了谁 | 有没有反向依赖？ |
 |---|---------|---------------|
-| pi-ai | @anthropic-ai/sdk, openai, @google/genai 等 SDK | 没有，它不依赖任何 pi-xxx 包 |
-| pi-agent-core | @earendil-works/pi-ai, typebox, yaml | 只向上依赖 pi-ai，不依赖 coding-agent |
-| pi-coding-agent | @earendil-works/pi-ai, @earendil-works/pi-agent-core, @earendil-works/pi-tui | 只向上依赖，不反向依赖 |
+| pi-ai | Provider SDK、pi-telemetry | 不依赖 agent-core 或 coding-agent |
+| pi-agent-core | pi-ai、chord、pi-telemetry 等 | 不依赖 coding-agent |
+| pi-coding-agent | pi-ai、pi-agent-core、pi-tui、chord 等 | 组合模型、引擎与界面 |
 
 用一张图表示：
 
@@ -281,18 +284,17 @@ pi-ai（底层）
   │         ↑
   │         │
   └─── pi-coding-agent（顶层）
-            ↑
-            │
-       pi-orchestrator（实验性外围编排层，可选）
+
+共享基础设施 chord / telemetry 位于这条产品主线旁边
 ```
 
-所有箭头都朝上。**底层永远不知道上层的存在**——pi-ai 的代码里没有任何一个 import 指向 pi-agent-core 或 pi-coding-agent；orchestrator 也不会反向渗透到 coding-agent 内部。这就是分层的真正规则：**不是限制引用层级，而是控制依赖方向必须单向向上。**
+所有箭头都朝上。**底层永远不知道上层的存在**——pi-ai 的代码里没有任何一个 import 指向 pi-agent-core 或 pi-coding-agent。这就是分层的真正规则：**不是限制引用层级，而是控制依赖方向必须单向向上。**
 
 有人可能会问：那 pi-tui 呢，它也是底层的吗？
 
 pi-tui 的运行时依赖只有 `marked`（Markdown 渲染）和 `get-east-asian-width`（东亚字符宽度），**没有任何 pi-xxx 包**。它不依赖 pi-ai，也不依赖 pi-agent-core。它就是一个独立的终端渲染工具。pi-coding-agent 依赖 pi-tui，把它当工具用，不存在循环依赖。
 
-> 代码来源：各包的 `package.json` 的 `dependencies` 字段。`packages/ai/src/types.ts` 定义了 `KnownApi`（9 种 API 类型）和 `KnownProvider`（30+ 提供商），这些是整个系统的类型基础。
+> 代码来源：各包的 `package.json` 的 `dependencies` 字段。`packages/ai/src/types.ts` 定义了 `KnownApi`（API 协议标识）和 `KnownProvider`（内置 Provider 标识），模型和协议标识只是地图，具体能力还要看模型元数据和 Provider 实现。
 
 ---
 
@@ -305,9 +307,10 @@ pi-tui 的运行时依赖只有 `marked`（Markdown 渲染）和 `get-east-asian
 ### 第一层：pi-ai 定义原子
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 // packages/ai/src/types.ts（节选）
-// 最基础的消息类型——所有 LLM 都认的格式
-type Message = UserMessage | AssistantMessage | ToolResultMessage
+// Pi 的统一消息类型——再由 Provider 转为各家协议
+type Message = SystemMessage | UserMessage | AssistantMessage | ToolResultMessage
 
 // 模型定义——描述一个 LLM 的全部信息
 interface Model<TApi> {
@@ -331,6 +334,7 @@ interface Tool<TSchema> {
 ### 第二层：pi-agent-core 把原子组合成分子
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 // packages/agent/src/types.ts（节选）
 import type {
     Message, Model, Tool, ImageContent, ...
@@ -339,7 +343,7 @@ import type {
 // 扩展消息：除了标准 LLM 消息，还可以有自定义消息
 type AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessages]
 
-// 扩展工具：除了 schema，还有参数预处理、执行函数和执行模式（types.ts:371-394）
+// 扩展工具：除了 schema，还有参数预处理、执行函数和执行模式（types.ts）
 interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
     label: string                                    // 显示名称
     prepareArguments?: (args: unknown) => Static<TParameters>   // 参数预处理
@@ -350,7 +354,7 @@ interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> exten
 
 注意两件事：
 
-1. **`AgentMessage` 是 `Message` 的超集**。`Message` 是只有三种标准消息（User/Assistant/ToolResult），`AgentMessage` 在此基础上加入了自定义消息（如压缩摘要、分支信息等）。用 TypeScript 的联合类型（`|`）实现扩展，而不是修改原来的类型定义。
+1. **`AgentMessage` 是 `Message` 的超集**。`Message` 包含四种标准消息（System/User/Assistant/ToolResult），`AgentMessage` 在此基础上加入了自定义消息（如压缩摘要、分支信息等）。用 TypeScript 的联合类型（`|`）实现扩展，而不是修改原来的类型定义。
 2. **`AgentTool` 继承了 `Tool`**。底层的 `Tool` 只知道"工具叫什么、参数是什么"（这是 LLM 需要知道的信息），上层的 `AgentTool` 加上了"怎么执行、串行还是并行"（这是 Agent 循环需要知道的信息）。
 
 ### 第三层：pi-coding-agent 把分子组合成材料
@@ -358,10 +362,11 @@ interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> exten
 到了 coding-agent 层，类型变成了具体的业务定义：
 
 ```typescript
-// packages/coding-agent/src/core/extensions/types.ts:435-482（节选）
+// 教学简化：省略外围定义，展示数据形状或关键步骤
+// packages/coding-agent/src/core/extensions/types.ts（节选）
 // 工具定义（产品视角）——完整接口有 10+ 个字段，下面列出关键字段
 // 注意：ToolDefinition 在 TypeScript 层面是独立 interface 重新声明，
-// 与 AgentTool 是"结构兼容"而非用 extends 继承（详见 types.ts:435）
+// 与 AgentTool 是"结构兼容"而非用 extends 继承（详见 types.ts）
 interface ToolDefinition<TParams extends TSchema, TDetails = unknown, TState = any> {
     name: string
     label: string                         // UI 展示名
@@ -377,7 +382,7 @@ interface ToolDefinition<TParams extends TSchema, TDetails = unknown, TState = a
     // ... 还有渲染器、UI 组件等业务属性
 }
 
-// 扩展定义（运行时聚合体，types.ts:1585-1595）
+// 扩展定义（运行时聚合体，types.ts）
 interface Extension {
     path: string                                       // 扩展路径
     resolvedPath: string                               // 解析后的绝对路径
@@ -419,18 +424,18 @@ interface AgentTool<TSchema> extends Tool<TSchema> {
 After（pi-coding-agent 层）：ToolDefinition 加上"怎么显示"
 ────────────────────────────────────────────
 interface ToolDefinition {
-    // 继承 AgentTool 的全部字段
-    // + 渲染器、权限控制等业务属性
+    // 独立接口：声明执行、参数预处理、渲染等字段
+    // 由包装器适配为循环使用的 AgentTool
 }
 ```
 
-每一层只关心自己该关心的事，通过继承或组合在上层类型的基础上扩展。底层类型从不修改——pi-ai 的 `Tool` 接口里没有 `execute` 字段，因为 LLM 不需要知道工具怎么执行。
+每一层只关心自己该关心的事，通过继承或组合在下层类型的基础上扩展。底层类型从不修改——pi-ai 的 `Tool` 接口里没有 `execute` 字段，因为 LLM 不需要知道工具怎么执行。
 
-<Diagram file="/assets/260702-ch02-type-progression.svg" caption="三层类型递进扩展" id="260702-ch02-type-progression" />
+<Diagram file="/assets/260925-ch02-type-progression.svg" caption="三层类型递进扩展" id="260925-ch02-type-progression" />
 
-**配图说明**：三列对比 Tool / AgentTool / ToolDefinition 的字段。每一层只加自己该关心的字段——LLM 关心"长什么样"、Agent 关心"怎么执行"、coding-agent 关心"怎么显示"。底层可独立发布复用，是分层架构的核心承诺。
+**配图说明**：各层保留自己的职责；应用消息在 convertToLlm 处收敛。
 
-> 代码来源：`packages/ai/src/types.ts:6-15`（`KnownApi` 类型定义）、`packages/agent/src/types.ts:1-12`（从 pi-ai 导入基础类型）、`packages/coding-agent/src/core/extensions/index.ts`（ToolDefinition 和 Extension 类型导出）。
+> 代码来源：`packages/ai/src/types.ts`（`KnownApi` 类型定义）、`packages/agent/src/types.ts`（从 pi-ai 导入基础类型）、`packages/coding-agent/src/core/extensions/index.ts`（ToolDefinition 和 Extension 类型导出）。
 
 ---
 
@@ -445,6 +450,7 @@ interface ToolDefinition {
 你写了一个 Agent，循环逻辑和 OpenAI SDK 调用写在一起：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 // 假设：不分层的 Agent
 import OpenAI from "openai";
 
@@ -467,20 +473,22 @@ while (true) {
 用 pi-ai + pi-agent-core，不引入 coding-agent：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 // 只用底层 + 中间层
 import { Agent, agentLoop } from "@earendil-works/pi-agent-core";
-import { streamSimple } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 ```
 
-完全可行。pi-agent-core 不知道什么是 "read" 工具、什么是 "bash" 工具——它只定义了工具的接口规范（`AgentTool`），具体注册什么工具由你决定。你甚至可以不注册任何工具，让它纯聊天。
+完全可行。`Agent` 类通过 `AgentTool` 接口执行工具，具体注册什么由你决定；还需要给它提供 `streamFn`，例如这里导入的 `streamSimple`。你甚至可以不注册任何工具，让它纯聊天。
 
 **这说明 coding-agent 层不是必须的。** 它的上百个文件是在 pi-agent-core 的基础上"添砖加瓦"——加了编程专用的工具、CLI 界面、扩展系统。如果你的 Agent 不是编程助手，你完全可以用 pi-agent-core 搭配自己写的工具。
 
 ### 场景 C：只用一层（只用 pi-ai）
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 // 只用底层
-import { streamSimple } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 
 const stream = streamSimple(model, context);
 for await (const event of stream) {
@@ -490,7 +498,7 @@ for await (const event of stream) {
 
 也完全可以。pi-ai 自己就是一个独立的包——调用 LLM、流式返回结果，不需要任何 Agent 框架。
 
-但你就得自己写循环、自己管理消息状态、自己处理工具调用。这正是 pi-agent-core 存在的意义——**它帮你做了 Agent 最难的那部分（循环、状态、事件、压缩），你只需要告诉它用什么工具。**
+但你就得自己写循环、自己管理消息状态、自己处理工具调用。这正是 pi-agent-core 存在的意义——**它帮你做了 Agent 最难的那部分（循环、状态、事件），你只需要告诉它用什么工具。**
 
 ### 三层不是教条，依赖方向控制才是
 
@@ -506,7 +514,7 @@ for await (const event of stream) {
 
 **底层的代码里不能出现任何对上层的引用。**
 
-pi-ai 不能 import pi-agent-core 的任何东西。pi-agent-core 不能 import pi-coding-agent 的任何东西。这条规则确保了：你可以把任何一层换成自己的实现，而不影响其他层。比如你可以把 pi-ai 换成自己的模型调用层，pi-agent-core 和 pi-coding-agent 都不需要改。
+pi-ai 不能 import pi-agent-core 的任何东西。pi-agent-core 不能 import pi-coding-agent 的任何东西。这条规则确保了：你可以把任何一层换成自己的实现，而不影响其他层。比如你可以在 `Agent` 的 `streamFn` 边界接入自己的调用实现，只要满足它的模型、消息和流事件契约；这不等于可以无条件删除整个 pi-ai 类型依赖。
 
 ---
 
@@ -556,7 +564,7 @@ Pi 的三层都能通过这个测试：
 这一章我们从外面看了一眼 Pi 的整体架构。你知道了：
 
 - Pi 分三层：pi-ai（管模型）→ pi-agent-core（管循环）→ pi-coding-agent（管业务）
-- 分层的核心规则是**依赖方向单向向上**，底层对上层一无所知
+- 分层的核心规则是**上层依赖下层**，底层对上层一无所知
 - 类型从底层到顶层逐步扩展：`Tool` → `AgentTool` → `ToolDefinition`
 - 三层不是必须的，层数取决于你的复杂度；但依赖方向控制是必须的
 
@@ -567,3 +575,12 @@ Pi 的三层都能通过这个测试：
 ---
 
 > **本教程结构说明**：前 6 章（第1章开篇→第6章消息系统）建立对 Pi-Agent 核心机制的完整理解，建议按顺序通读。第 7 章起（事件驱动、上下文工程、上下文压缩、会话管理等）进入进阶工程议题，每章相对独立，可按需跳读。
+
+
+---
+
+> **本章关键源码索引**（Pi v0.87.1，固定发布提交）：
+> - [packages/agent/src/types.ts](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/agent/src/types.ts) — AgentMessage 与 AgentTool
+> - [packages/coding-agent/src/core/extensions/types.ts#L455](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/coding-agent/src/core/extensions/types.ts#L455) — ToolDefinition
+> - [packages/agent/src/harness/agent-harness.ts](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/agent/src/harness/agent-harness.ts) — Harness 独立运行实现
+> - [packages/ai/src/index.ts](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/ai/src/index.ts) — AI 包主入口

@@ -3,6 +3,7 @@
 // Hero 区：超大 Pi Agent 标题 + 副标题 + 右侧项目卡片。
 // 克制装饰，靠字号张力与不对称构图建立设计感。
 import BookIntro from './BookIntro.astro';
+import { withBase } from '../../utils/url';
 
 const piAgentDesc = 'Pi Agent（pi.dev）是 OpenClaw 等应用的运行时底座——一套真正能上线的 Agent 工程参考实现。';
 const piAgentGithub = 'https://github.com/earendil-works/pi';
@@ -16,6 +17,7 @@ const piAgentGithub = 'https://github.com/earendil-works/pi';
         从上手到深入<em>，</em><br/>
         <span class="hero-sub-accent">一本读懂 Agent 内核</span>
       </p>
+      <p class="hero-version"><a href={withBase('/modules/ch01-overview')}>源码精读 TypeScript · Pi v0.87.1 →</a></p>
     </div>
 
     <aside class="hero-right">
@@ -29,6 +31,8 @@ const piAgentGithub = 'https://github.com/earendil-works/pi';
 </section>
 
 <style>
+.hero-version { margin-top: var(--space-5); font-size: var(--fs-small); }
+.hero-version a { color: var(--accent); }
 .hero {
   padding: var(--space-16) var(--space-6) var(--space-12);
 }

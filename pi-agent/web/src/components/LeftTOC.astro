@@ -1,15 +1,15 @@
 ---
 // src/components/LeftTOC.astro
-// Shows all TS-variant modules in the left sidebar; highlights current.
+// Shows the current language and series in the left sidebar; highlights current.
 // 标题可点击收起/展开，状态记到 localStorage（key: pi-agent-book:toc-collapsed）。
-import { getAllModules, SERIES_META, type ModuleEntry } from '../utils/collection';
+import { getAllModules, getVariantUrl, SERIES_META, type ModuleEntry } from '../utils/collection';
 
 interface Props { currentEntry: ModuleEntry; }
 const { currentEntry } = Astro.props;
-// 系列隔离：只展示当前章节所属系列的 TS 版目录
+// 系列与语言隔离：只展示当前章节所属的阅读路径。
 const allModules = (await getAllModules(currentEntry.data.book))
-  .filter(m => m.data.variant === 'ts');
-const currentBaseSlug = currentEntry.slug.replace(/\.python$/, '');
+  .filter(m => m.data.variant === currentEntry.data.variant);
+const currentBaseSlug = currentEntry.slug;
 const seriesLabel = SERIES_META[currentEntry.data.book].label;
 ---
 
@@ -31,7 +31,7 @@ const seriesLabel = SERIES_META[currentEntry.data.book].label;
       const isCurrent = m.slug === currentBaseSlug;
       return (
         <li class={`toc-item ${isCurrent ? 'is-current' : ''}`}>
-          <a href={`/modules/${m.slug}`}>
+          <a href={getVariantUrl(m)}>
             <span class="toc-num">{m.data.module}</span>
             <span class="toc-title">{m.data.title}</span>
           </a>

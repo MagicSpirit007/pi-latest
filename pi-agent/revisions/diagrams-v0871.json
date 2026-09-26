@@ -1,0 +1,831 @@
+[
+  [
+    "ch01-four-layer-architecture",
+    "三层主线，一个终端侧库",
+    "layers",
+    [
+      [
+        "pi-coding-agent",
+        [
+          "CLI / SDK · AgentSession",
+          "会话、工具、资源、扩展"
+        ]
+      ],
+      [
+        "pi-agent-core",
+        [
+          "Agent · Loop · 队列",
+          "模型响应 → 工具结果 → 下一轮"
+        ]
+      ],
+      [
+        "pi-ai",
+        [
+          "Models · Provider · API",
+          "统一消息、流式事件、认证"
+        ]
+      ],
+      [
+        "pi-tui（侧库）",
+        [
+          "终端组件与差分渲染",
+          "由 coding-agent 依赖，独立于核心循环"
+        ]
+      ]
+    ],
+    "依赖由上到下；pi-tui 与 Agent 内核没有上下层调用关系。",
+    "packages/coding-agent/src/core/sdk.ts"
+  ],
+  [
+    "ch02-type-progression",
+    "类型如何在三层之间生长",
+    "layers",
+    [
+      [
+        "pi-ai",
+        [
+          "Message：system / user / assistant / toolResult",
+          "Tool：名称、描述、参数 Schema"
+        ]
+      ],
+      [
+        "pi-agent-core",
+        [
+          "AgentMessage = Message + CustomAgentMessages",
+          "AgentTool：增加 execute 与执行配置"
+        ]
+      ],
+      [
+        "pi-coding-agent",
+        [
+          "扩展 bashExecution / custom / summary 消息",
+          "ToolDefinition：增加 UI 渲染与扩展上下文"
+        ]
+      ]
+    ],
+    "各层保留自己的职责；应用消息在 convertToLlm 处收敛。",
+    "packages/agent/src/types.ts"
+  ],
+  [
+    "ch03-trace-turn-nesting",
+    "一次用户任务，不一定只有一次底层运行",
+    "flow",
+    [
+      [
+        "Session 活动开始",
+        [
+          "输入进入会话，准备当前上下文"
+        ]
+      ],
+      [
+        "Agent 运行",
+        [
+          "agent_start → Turn 1 → Turn 2 → agent_end"
+        ]
+      ],
+      [
+        "自动后续工作",
+        [
+          "重试、压缩、待处理消息可能再次启动 Agent"
+        ]
+      ],
+      [
+        "Session 收尾",
+        [
+          "agent_before_settle → 如无续跑 → agent_settled"
+        ]
+      ]
+    ],
+    "agent_end 结束一趟 Loop；agent_settled 标记本次会话活动收尾。",
+    "packages/coding-agent/src/core/agent-session.ts"
+  ],
+  [
+    "ch03-stopreason-flowchart",
+    "响应之后，谁决定继续？",
+    "flow",
+    [
+      [
+        "收到 AssistantMessage",
+        [
+          "error / aborted：调用 finishTurn 后硬退出",
+          "length + toolCall：产出失败结果，不执行工具"
+        ]
+      ],
+      [
+        "正常响应的工具批次",
+        [
+          "准备 → 执行 → 收尾；全批 terminate 才抑制自然续跑"
+        ]
+      ],
+      [
+        "finishTurn → turn_end",
+        [
+          "end：退出且保留未消费队列",
+          "continue：确保下一次请求；undefined：通常调度"
+        ]
+      ],
+      [
+        "继续，或退出",
+        [
+          "工具结果 / steering → 下一轮；再检查 follow-up",
+          "都没有，也无待兑现 continue → agent_end"
+        ]
+      ]
+    ],
+    "继续前执行 prepareNextTurn；每次请求前执行 prepareRequest。",
+    "packages/agent/src/agent-loop.ts"
+  ],
+  [
+    "ch03-streaming-replace",
+    "流式输出：更新同一个助手消息槽位",
+    "timeline",
+    [
+      [
+        "message_start",
+        [
+          "加入本轮 assistant 占位消息"
+        ]
+      ],
+      [
+        "message_update × N",
+        [
+          "用 partial 快照替换该槽位",
+          "text_delta 适合逐字显示，不是完整消息"
+        ]
+      ],
+      [
+        "message_end",
+        [
+          "用最终 AssistantMessage 替换槽位",
+          "完成后供工具解析，并交给 Session 持久化"
+        ]
+      ]
+    ],
+    "一条助手消息可以包含多个文本、思考和工具调用块。",
+    "packages/agent/src/agent-loop.ts"
+  ],
+  [
+    "ch03-steering-vs-followup",
+    "两种队列，两种用户意图",
+    "compare",
+    [
+      [
+        "steering",
+        [
+          "“先别改文件”",
+          "在循环的队列读取点进入下一次请求"
+        ]
+      ],
+      [
+        "follow-up",
+        [
+          "“修完顺便跑测试”",
+          "当前工具链与 steering 处理后，外层循环读取"
+        ]
+      ],
+      [
+        "finishTurn 决策",
+        [
+          "end：保留尚未消费的消息",
+          "continue：与工具、队列带来的续转合并"
+        ]
+      ]
+    ],
+    "steering 不会在一个工具批次执行到一半时取消其余工具。",
+    "packages/agent/src/agent-loop.ts"
+  ],
+  [
+    "ch03-kernel-onion",
+    "内核循环与会话外壳",
+    "layers",
+    [
+      [
+        "AgentSession",
+        [
+          "会话投影 · 资源 · 扩展 · 自动恢复 · settled"
+        ]
+      ],
+      [
+        "Agent",
+        [
+          "可观察状态 · 队列 · 等待事件监听器"
+        ]
+      ],
+      [
+        "runLoop",
+        [
+          "prepareRequest → 模型 → 工具 → finishTurn",
+          "继续时：prepareNextTurn → 下一轮"
+        ]
+      ]
+    ],
+    "默认 SDK 由这条链路组装；Harness 是另一套运行基础设施。",
+    "packages/coding-agent/src/core/sdk.ts"
+  ],
+  [
+    "ch04-provider-formats",
+    "同一条输入，四种协议表达",
+    "compare",
+    [
+      [
+        "Anthropic Messages",
+        [
+          "content: [{ type: \"text\", text: \"...\" }]",
+          "工具结果通常放在 user 的 tool_result 块"
+        ]
+      ],
+      [
+        "OpenAI Completions",
+        [
+          "content: \"...\"",
+          "工具结果使用 role: \"tool\""
+        ]
+      ],
+      [
+        "Google Generative AI",
+        [
+          "parts: [{ text: \"...\" }]",
+          "工具结果使用 functionResponse"
+        ]
+      ],
+      [
+        "Amazon Bedrock Converse",
+        [
+          "content: [{ text: \"...\" }]",
+          "工具结果使用 toolResult 块"
+        ]
+      ]
+    ],
+    "这里比较协议格式；同一供应商也可能提供多种 API。",
+    "packages/ai/src/types.ts"
+  ],
+  [
+    "ch04-translation-company",
+    "翻译公司如何分工",
+    "flow",
+    [
+      [
+        "ModelRuntime",
+        [
+          "产品层：模型配置、认证与 Models 集合"
+        ]
+      ],
+      [
+        "Models + Provider",
+        [
+          "选择模型，解析该供应商的认证与调用能力"
+        ]
+      ],
+      [
+        "API 实现",
+        [
+          "把 TranscriptContext 翻译为协议请求"
+        ]
+      ],
+      [
+        "统一流式事件",
+        [
+          "AssistantMessageEventStream",
+          "流式增量与最终统一消息返回调用方"
+        ]
+      ]
+    ],
+    "主入口使用显式集合；/compat 保留全局 getModel / stream 等便捷入口。",
+    "packages/coding-agent/src/core/model-runtime.ts"
+  ],
+  [
+    "ch04-translator-5-steps",
+    "API 适配器的五步工作",
+    "flow",
+    [
+      [
+        "① 归一化输入",
+        [
+          "提示词与工具声明已进入 SystemMessage"
+        ]
+      ],
+      [
+        "② 构建请求",
+        [
+          "处理消息格式、模型能力和协议参数"
+        ]
+      ],
+      [
+        "③ 发送与读取",
+        [
+          "认证头、请求回调、响应与流式数据"
+        ]
+      ],
+      [
+        "④ 解析增量",
+        [
+          "text / thinking / toolcall → 统一事件"
+        ]
+      ],
+      [
+        "⑤ 完成消息",
+        [
+          "stopReason、usage、cost；失败编码为 error"
+        ]
+      ]
+    ],
+    "这是阅读适配器的教学骨架，各协议的具体组织方式不完全相同。",
+    "packages/ai/src/api/anthropic-messages.ts"
+  ],
+  [
+    "ch04-thinking-levels",
+    "统一思考级别，按模型能力落地",
+    "flow",
+    [
+      [
+        "调用方意图",
+        [
+          "off · minimal · low · medium · high · xhigh · max"
+        ]
+      ],
+      [
+        "模型能力约束",
+        [
+          "clampThinkingLevel：选择该模型支持的级别"
+        ]
+      ],
+      [
+        "协议参数",
+        [
+          "适配为预算、effort 等供应商字段"
+        ]
+      ],
+      [
+        "返回思考内容",
+        [
+          "统一为 thinking 块；是否返回由模型与协议决定"
+        ]
+      ]
+    ],
+    "统一名字不意味着各模型的开销相同，也不保证都支持最高级别。",
+    "packages/ai/src/types.ts"
+  ],
+  [
+    "ch05-five-step-pipeline",
+    "一次工具调用的五步管道",
+    "flow",
+    [
+      [
+        "先发 tool_execution_start",
+        [
+          "查找工具",
+          "① prepareArguments → ② Schema 校验"
+        ]
+      ],
+      [
+        "③ beforeToolCall",
+        [
+          "允许：进入 execute；阻止：直接形成错误结果"
+        ]
+      ],
+      [
+        "④ execute",
+        [
+          "返回 content / details / usage / terminate",
+          "普通执行异常转为工具错误结果"
+        ]
+      ],
+      [
+        "⑤ afterToolCall",
+        [
+          "只对实际执行过的调用运行；按字段覆盖结果"
+        ]
+      ],
+      [
+        "完成",
+        [
+          "tool_execution_end → toolResult 消息",
+          "准备阶段失败会跳过 execute 和 afterToolCall"
+        ]
+      ]
+    ],
+    "监听器或契约外异常仍可能中断循环；不能把所有错误都视为工具错误。",
+    "packages/agent/src/agent-loop.ts"
+  ],
+  [
+    "ch05-parallel-sequential",
+    "整批串行，或先准备再并行",
+    "compare",
+    [
+      [
+        "串行批次",
+        [
+          "任一工具 executionMode=sequential，或全局串行",
+          "A 准备→执行→收尾，再轮到 B"
+        ]
+      ],
+      [
+        "并行批次",
+        [
+          "A、B 依次准备；获准工具的执行与收尾并行",
+          "end 事件按完成顺序，结果消息按调用顺序"
+        ]
+      ],
+      [
+        "批次停止提示",
+        [
+          "每个最终结果都 terminate=true 才抑制自然续跑",
+          "兄弟工具仍会完成；finishTurn / 队列另行决策"
+        ]
+      ]
+    ],
+    "修改文件的工具可以借助执行模式避免同批操作竞争。",
+    "packages/agent/src/agent-loop.ts"
+  ],
+  [
+    "ch06-two-layer-messages",
+    "内富外严：消息的两层边界",
+    "compare",
+    [
+      [
+        "AgentMessage：应用内部",
+        [
+          "标准四种 + 自定义消息",
+          "bashExecution、custom、branchSummary 等"
+        ]
+      ],
+      [
+        "Message：模型抽象层",
+        [
+          "system · user · assistant · toolResult",
+          "SystemMessage 承载提示词与工具状态更新"
+        ]
+      ],
+      [
+        "转换边界",
+        [
+          "应用的 convertToLlm 决定保留、转换或过滤",
+          "coding-agent 的自定义对话消息通常转为 user"
+        ]
+      ]
+    ],
+    "CustomEntry 是会话元数据，不等于给模型看的 CustomMessage。",
+    "packages/coding-agent/src/core/messages.ts"
+  ],
+  [
+    "ch06-message-pipeline",
+    "一份会话，几种不同视图",
+    "flow",
+    [
+      [
+        "SessionManager 投影",
+        [
+          "当前分支 + 压缩 + context_edit"
+        ]
+      ],
+      [
+        "transformContext",
+        [
+          "应用消息层；可筛选、补充请求上下文"
+        ]
+      ],
+      [
+        "convertToLlm",
+        [
+          "自定义消息转换为标准 Message"
+        ]
+      ],
+      [
+        "normalizeContext",
+        [
+          "得到 TranscriptContext，系统与工具在消息中"
+        ]
+      ],
+      [
+        "Provider / API",
+        [
+          "翻译为供应商请求"
+        ]
+      ]
+    ],
+    "display:false 只影响显示；是否发送给模型由转换逻辑决定。",
+    "packages/ai/src/utils/transcript.ts"
+  ],
+  [
+    "ch07-event-nesting",
+    "从一轮结束到会话安定下来",
+    "timeline",
+    [
+      [
+        "finishTurn 边界",
+        [
+          "Session 持久化消息；扩展 turn_end 可提交草稿"
+        ]
+      ],
+      [
+        "内核 turn_end",
+        [
+          "Agent 等待监听器；Session 普通订阅忽略返回值"
+        ]
+      ],
+      [
+        "agent_end",
+        [
+          "底层运行完成；Session 处理自动后续工作"
+        ]
+      ],
+      [
+        "agent_before_settle",
+        [
+          "允许有效草稿 + continue 再启动一轮"
+        ]
+      ],
+      [
+        "agent_settled",
+        [
+          "收尾通知；完成信号发在这里"
+        ]
+      ]
+    ],
+    "扩展 turn_end 提前派发一次；普通订阅仍会收到稍后的 turn_end。",
+    "packages/coding-agent/src/core/agent-session.ts"
+  ],
+  [
+    "ch07-two-pipelines",
+    "两条管道，在 Session 层分流",
+    "compare",
+    [
+      [
+        "内核 Agent.subscribe",
+        [
+          "等待监听器返回的 Promise",
+          "把 AgentSession 的工作纳入事件顺序"
+        ]
+      ],
+      [
+        "管道 A：session.subscribe",
+        [
+          "同步调用监听器，忽略返回的 Promise",
+          "适合 UI、日志；异步错误由订阅者处理"
+        ]
+      ],
+      [
+        "管道 B：扩展 pi.on",
+        [
+          "等待处理器；决策事件读取其返回值",
+          "tool_call、context、边界草稿等改变行为"
+        ]
+      ]
+    ],
+    "“不等待 Promise”不等于不阻塞：普通订阅中的同步工作照样占用调用栈。",
+    "packages/coding-agent/src/core/extensions/runner.ts"
+  ],
+  [
+    "ch08-truncate-strategy",
+    "先控制工具输出的体积",
+    "compare",
+    [
+      [
+        "默认双重上限",
+        [
+          "2000 行 / 50 KB，先到者生效",
+          "具体工具还可使用自己的限制"
+        ]
+      ],
+      [
+        "read / grep 等",
+        [
+          "保留开头，让入口与匹配先被看到",
+          "超限时附上截断信息，指引继续读取"
+        ]
+      ],
+      [
+        "bash / powershell",
+        [
+          "保留末尾，优先保留结论与报错",
+          "完整输出可落盘；UTF-8 边界保持完整"
+        ]
+      ]
+    ],
+    "单行、字节和行数限制要分别处理；截断不同于会话压缩。",
+    "packages/coding-agent/src/core/tools/truncate.ts"
+  ],
+  [
+    "ch08-claude-md-recursion",
+    "指令发现与资源信任各管一件事",
+    "flow",
+    [
+      [
+        "每个目录选择一个指令文件",
+        [
+          "AGENTS.override.md → AGENTS.md → AGENTS.MD",
+          "→ CLAUDE.md → CLAUDE.MD（首个可读文件）"
+        ]
+      ],
+      [
+        "组装顺序",
+        [
+          "全局 agentDir；再由文件系统根到 cwd",
+          "处理 worktree 中被遮蔽的指令文件"
+        ]
+      ],
+      [
+        "项目资源信任",
+        [
+          "先加载全局/显式扩展，再解析项目是否可信",
+          "按最终信任状态加载设置与项目资源"
+        ]
+      ],
+      [
+        "按需展开",
+        [
+          "项目指令进入提示词；Skill 清单先进入提示词",
+          "任务匹配时再由工具读取 Skill 全文"
+        ]
+      ]
+    ],
+    "项目文本发现和可执行资源的信任不是同一个开关；SDK 不自动弹出 CLI 界面。",
+    "packages/coding-agent/src/core/resource-loader.ts"
+  ],
+  [
+    "ch08-full-pipeline",
+    "资源与会话如何汇入同一次请求",
+    "flow",
+    [
+      [
+        "资源与启用工具",
+        [
+          "设置、项目指令、Skills、扩展、工具白名单"
+        ]
+      ],
+      [
+        "SystemMessage + 会话投影",
+        [
+          "结构化提示词与工具变化进入 transcript"
+        ]
+      ],
+      [
+        "两类 context 钩子",
+        [
+          "context：先变换非 system 消息",
+          "context_with_system：再接管完整消息"
+        ]
+      ],
+      [
+        "转换与归一化",
+        [
+          "convertToLlm → normalizeContext",
+          "转换应用消息，得到 TranscriptContext"
+        ]
+      ],
+      [
+        "Models / Provider / API",
+        [
+          "认证、协议翻译、模型请求"
+        ]
+      ]
+    ],
+    "context 钩子影响本次请求；持久修改用 context_edit 等会话条目。",
+    "packages/coding-agent/src/core/agent-session.ts"
+  ],
+  [
+    "ch09-before-after",
+    "摘要替换旧上下文，原历史仍保留",
+    "budget",
+    [
+      [
+        "压缩前（示意）",
+        [
+          "旧对话 120k",
+          "近期消息 20k"
+        ]
+      ],
+      [
+        "压缩后（示意）",
+        [
+          "摘要 3k",
+          "近期消息 20k"
+        ]
+      ],
+      [
+        "始终保留的区别",
+        [
+          "会话文件：原记录仍在",
+          "模型请求：读取压缩后的投影"
+        ]
+      ]
+    ],
+    "数字仅用于说明；实际预算按模型设置解析，摘要大小也随内容变化。",
+    "packages/coding-agent/src/core/compaction/compaction.ts"
+  ],
+  [
+    "ch09-cut-point",
+    "切割点是“第一条保留的条目”",
+    "flow",
+    [
+      [
+        "读取当前投影",
+        [
+          "先应用已有压缩和 context_edit"
+        ]
+      ],
+      [
+        "从末尾累积近期预算",
+        [
+          "达到 keepRecentTokens 后选择合法边界"
+        ]
+      ],
+      [
+        "边界可落在用户或助手等消息",
+        [
+          "不能从 system 或孤立 toolResult 开始"
+        ]
+      ],
+      [
+        "若切在同一用户任务内部",
+        [
+          "摘要覆盖旧历史 + 该任务前缀",
+          "保留区从选中的 cut point 开始"
+        ]
+      ]
+    ],
+    "split turn 在这里指用户任务跨度；不要与内核的一次模型 Turn 混淆。",
+    "packages/coding-agent/src/core/compaction/compaction.ts"
+  ],
+  [
+    "ch09-compaction-flow",
+    "压缩不是只在 agent_end 后发生",
+    "flow",
+    [
+      [
+        "检查时机",
+        [
+          "输入前、下一轮准备、运行后恢复或手动请求"
+        ]
+      ],
+      [
+        "解析模型预算",
+        [
+          "模型覆盖 → 普通设置 → 默认预算"
+        ]
+      ],
+      [
+        "准备与摘要",
+        [
+          "当前投影切分；主摘要与前缀摘要依次生成"
+        ]
+      ],
+      [
+        "追加 compaction 条目",
+        [
+          "保存摘要、保留边界、系统检查点和用量"
+        ]
+      ],
+      [
+        "下一次请求",
+        [
+          "从新投影继续；溢出恢复受次数与状态约束"
+        ]
+      ]
+    ],
+    "摘要请求使用 cacheRetention:none；失败或取消不提交成功结果。",
+    "packages/coding-agent/src/core/compaction/compaction.ts"
+  ],
+  [
+    "ch10-session-tree",
+    "回退只是移动指针，分支继续追加",
+    "tree",
+    [],
+    "e3–e5 的旧探索仍保留；新消息 e6 以 e2 为父节点。",
+    "packages/coding-agent/src/core/session-manager.ts"
+  ],
+  [
+    "ch10-entry-taxonomy",
+    "从追加式记录得到当前上下文",
+    "flow",
+    [
+      [
+        "SessionEntry 日志",
+        [
+          "message / model_change / thinking_level_change",
+          "compaction / context_edit / custom / usage 等"
+        ]
+      ],
+      [
+        "选择当前分支路径",
+        [
+          "root → leaf；其他分支保持原样"
+        ]
+      ],
+      [
+        "buildSessionProjection",
+        [
+          "压缩确定保留区；context_edit 替换内容或省略目标"
+        ]
+      ],
+      [
+        "convertToLlm → 请求",
+        [
+          "标准消息透传；自定义消息按应用规则转换"
+        ]
+      ]
+    ],
+    "context_edit 本身也是新条目；不会覆盖原消息，也不能编辑另一条分支。",
+    "packages/coding-agent/src/core/session-manager.ts"
+  ]
+]

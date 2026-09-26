@@ -2,6 +2,7 @@
 // src/components/TopBar.astro
 import ThemeToggle from './ThemeToggle.astro';
 import type { ModuleEntry } from '../utils/collection';
+import { withBase } from '../utils/url';
 
 interface Props { entry?: ModuleEntry; }
 const { entry } = Astro.props;
@@ -15,15 +16,15 @@ const author = {
   bio: '热衷于拆解 AI 工程的博主',
   repo: 'https://github.com/buchidonggua/dg-ai-notes',
   repoDisplay: 'github.com/buchidonggua/dg-ai-notes',
-  douyinQr: '/assets/donghua-douyin-qr.png',
-  bilibiliQr: '/assets/donghua-bilibili-qr.jpg',
+  douyinQr: withBase('/assets/donghua-douyin-qr.png'),
+  bilibiliQr: withBase('/assets/donghua-bilibili-qr.jpg'),
 };
 ---
 
-<header class="topbar">
+<header class="topbar" data-source-version={entry?.data.sourceVersion}>
   <div class="left-cluster">
     <button class="hamburger" aria-label="打开目录" aria-expanded="false">☰</button>
-    <a href="/" class="brand">Pi Agent <span class="brand-accent">·</span> Book</a>
+    <a href={withBase('/')} class="brand">Pi Agent <span class="brand-accent">·</span> Book</a>
   </div>
   <nav class="crumb" aria-label="breadcrumb">{title}</nav>
   <div class="actions">
@@ -314,6 +315,9 @@ const author = {
   .hamburger { display: none; }
 
   @media (max-width: 767px) {
+    .topbar[data-source-version] .crumb { display: none; }
+    .topbar[data-source-version] .left-cluster { flex-shrink: 0; }
+    .topbar[data-source-version] .brand { font-size: 18px; }
     .hamburger {
       display: block;
       background: none;

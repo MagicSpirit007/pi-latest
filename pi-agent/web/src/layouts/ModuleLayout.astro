@@ -14,6 +14,7 @@ import DiagramLightbox from '../components/DiagramLightbox.astro';
 import ImmersiveMode from '../components/ImmersiveMode.astro';
 import type { ModuleEntry } from '../utils/collection';
 import { getModuleStats, getCounterpartUrl } from '../utils/collection';
+import { withBase } from '../utils/url';
 
 interface Props { entry: ModuleEntry; }
 const { entry } = Astro.props;
@@ -33,7 +34,7 @@ const tsCounterpartUrl = isPython ? getCounterpartUrl(entry) : null;
       <LeftTOC currentEntry={entry} />
     </aside>
 
-    <main class="prose module-main">
+    <main class="prose module-main" data-source-version={data.sourceVersion}>
       <header class="module-header">
         <div class="module-eyebrow">{data.module}</div>
         <h1>{data.title}</h1>
@@ -44,7 +45,8 @@ const tsCounterpartUrl = isPython ? getCounterpartUrl(entry) : null;
             <> · 约 {stats.readMinutes} 分钟</>
           </div>
         )}
-        {data.counterpart && <LanguageSwitcher entry={entry} />}
+        {isPython && data.counterpart && <LanguageSwitcher entry={entry} />}
+        {data.sourceVersion && <div class="module-meta">TypeScript · Pi v{data.sourceVersion}</div>}
         {isPython && <div class="module-variant-badge">Python 转写 · 原作 TypeScript</div>}
       </header>
 
@@ -58,13 +60,13 @@ const tsCounterpartUrl = isPython ? getCounterpartUrl(entry) : null;
           )}
         />
       )}
-      <script is:inline src="/assets/js/diagram-linker.js" defer></script>
+      <script is:inline src={withBase('/assets/js/diagram-linker.js')} defer></script>
 
       <article id="module-content">
         {isPython && (
           <aside class="python-notice">
-            <strong>Python 转写版。</strong> 本文是 TypeScript 原版的 Python 转写，核心设计与原版一一对应，部分生态库按 Python 习惯调整。
-            {tsCounterpartUrl && <a href={tsCounterpartUrl}>查看 TypeScript 原版 →</a>}
+            <strong>历史 Python 转写版 · Pi v0.80.2。</strong> 本文保留原有内容，未随本次修订更新；接口与当前 TypeScript 版可能不同。
+            {tsCounterpartUrl && <a href={tsCounterpartUrl}>阅读新版 TypeScript · v0.87.1 →</a>}
           </aside>
         )}
         <slot />
@@ -89,6 +91,16 @@ const tsCounterpartUrl = isPython ? getCounterpartUrl(entry) : null;
 </BaseLayout>
 
 <style>
+  .module-main[data-source-version] {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .module-main[data-source-version] :global(table) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
   .page-grid {
     display: grid;
     grid-template-columns: var(--toc-width) minmax(0, 1fr) var(--toc-width);

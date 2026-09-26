@@ -14,7 +14,7 @@
 
 你的第一反应可能是：找到 read 工具，读文件，把内容塞进消息，完事。但现实中没这么简单——模型可能传了错误类型的参数（`path: 12345` 而不是 `"src/main.ts"`），模型可能要求执行危险命令（`rm -rf /`），工具执行时可能抛异常（文件不存在）。
 
-Pi 用一条**五步管道**来解决这些问题：参数预处理 → Schema 验证 → 权限拦截 → 工具执行 → 结果后处理。每一步都有明确的职责，每一步的错误都不会"炸掉"整个循环。
+Pi 用一条**五步管道**来解决这些问题：参数预处理 → Schema 验证 → 权限拦截 → 工具执行 → 结果后处理。正常的工具失败会被翻译成错误结果，交给模型处理。事件监听器本身抛错、进程退出等框架故障不在这个保证之内。
 
 但在讲管道之前，得先搞清楚一个更基础的问题：**工具到底是怎么定义的？** 为什么 Pi 要设计三层类型来描述"一个工具"？
 
@@ -27,7 +27,8 @@ Pi 用一条**五步管道**来解决这些问题：参数预处理 → Schema �
 打开 `packages/ai/src/types.ts`，你会看到工具的最底层定义：
 
 ```typescript
-// packages/ai/src/types.ts:433-437
+// 教学简化：省略外围定义，展示数据形状或关键步骤
+// packages/ai/src/types.ts
 export interface Tool<TParameters extends TSchema = TSchema> {
     name: string;            // 工具名，如 "read"、"bash"
     description: string;     // 给 LLM 看的工具描述
@@ -35,7 +36,7 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 }
 ```
 
-三个字段。工具就是一个有名字、有描述、有参数 Schema 的东西。
+上面节选了三个核心字段。新版还允许 `constrainedSampling` 声明采样约束偏好；它帮助 Provider 选择严格参数生成方式，不能代替本地验证。
 
 这个接口住在 `pi-ai` 层——纯模型适配层。它唯一关心的事情是：**怎么把工具的信息告诉模型。** `name` 和 `description` 会出现在发给模型的 API 请求里，`parameters` 告诉模型"你可以传哪些参数"。
 
@@ -48,7 +49,8 @@ Agent Loop 要执行工具调用，光有名片不够。它需要知道**怎么�
 于是 `pi-agent-core` 层在 Tool 基础上扩展了 `AgentTool`：
 
 ```typescript
-// packages/agent/src/types.ts:371-394
+// 教学简化：省略外围定义，展示数据形状或关键步骤
+// packages/agent/src/types.ts
 export interface AgentTool<TParameters, TDetails>
     extends Tool<TParameters>          // 继承 Tool 的三个字段
 {
@@ -64,7 +66,7 @@ export interface AgentTool<TParameters, TDetails>
 }
 ```
 
-从 Tool 到 AgentTool，新增了 4 个字段。每个都有明确用途：
+上面节选了最常用的四项能力；完整接口还包含重放策略等字段。这里先把主链路看清：
 
 - **`label`**：模型看到的是 `name`（"read"），UI 看到的是 `label`（"读取文件"）
 - **`prepareArguments`**：兼容层，处理不同模型输出的参数怪癖（后面详讲）
@@ -90,9 +92,10 @@ ToolDefinition 还新增了 `promptSnippet`（系统提示词片段）、`render
 
 Agent Loop 只认识 `AgentTool`，但产品层的工具都是 `ToolDefinition`。谁来把 ToolDefinition 变成 AgentTool？
 
-答案是一个只有十几行的包装器函数：
+答案是 `wrapToolDefinition`。下面是教学简化，突出闭包注入，省略了约束采样字段以及显式传入 ctx 时的回退处理：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 // packages/coding-agent/src/core/tools/tool-definition-wrapper.ts
 export function wrapToolDefinition(definition, ctxFactory?) {
     return {
@@ -121,13 +124,37 @@ export function wrapToolDefinition(definition, ctxFactory?) {
 
 ---
 
+### 注册与启用：有名片，不等于已经上场
+
+v0.87.1 提供 `read`、`bash`、`powershell`、`edit`、`write`、`grep`、`find`、`ls` 八种内置工具，默认启用 read、bash、edit、write。SDK 的 `tools` 是**工具名白名单**，不是 ToolDefinition 数组；自定义定义放到 `customTools`，扩展则用 `pi.registerTool()` 注册。注册后是否进入当前请求，还取决于启用集合；扩展可用 `pi.setActiveTools()` 调整。
+
+```typescript
+// 完整示例；依赖版本见本书修订记录
+// 完整 SDK 示例；需要已配置的模型与凭据，验证时只做类型检查
+import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
+
+const { session } = await createAgentSession({
+    sessionManager: SessionManager.inMemory(),
+    tools: ["read", "powershell", "edit", "write"],
+});
+try {
+    await session.prompt("列出当前目录的 TypeScript 文件，不修改文件。");
+} finally {
+    session.dispose();
+}
+```
+
+PowerShell 不是把字符串贴给 Bash：它使用自己的 shell 配置、UTF-8 前缀与命令构造，再复用 shell 工具的输出、取消和截断机制。选择它时，模型也需要收到对应的工具定义与提示词。
+
 ## 二、五步管道：工具调用不是"调个函数就完了"
 
 类型定义搞清楚了，现在看工具调用的实际执行过程。
 
-![工具调用五步管道](assets/260702-ch05-five-step-pipeline.svg)
+还有一道更早的检查：如果模型响应以 `length` 结束，这批 ToolCall 会由 `failToolCallsFromTruncatedMessage` 生成错误结果，不会进入 execute。参数可能只生成了一半，不能拿残缺指令去改文件。
 
-**配图说明**：从 ToolCall 到 ToolResultMessage 的五步垂直管道——prepareArguments→validate→beforeToolCall→execute→afterToolCall。每一步右侧都有失败分支（虚线箭头），但所有失败最终都汇聚成 isError:true 的消息，循环不被异常打断。
+![工具调用五步管道](assets/260925-ch05-five-step-pipeline.svg)
+
+**配图说明**：监听器或契约外异常仍可能中断循环；不能把所有错误都视为工具错误。
 
 ### 为什么不能直接调函数？
 
@@ -182,6 +209,7 @@ ToolResultMessage
 比如 Edit 工具期望 `edits` 是数组：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 // 模型实际传来的（某些模型把 JSON 数组序列化成了字符串）
 { edits: "[{\"oldText\":\"hello\",\"newText\":\"world\"}]" }
 
@@ -202,7 +230,7 @@ Before：{ path: 12345 }
 After： 验证失败 → 报错 → 不执行工具
 ```
 
-验证错误会被 `prepareToolCall` 的 try-catch 捕获，生成一个错误 ToolResultMessage。**工具永远不会收到类型错误的参数。**
+验证错误会被 `prepareToolCall` 的 try-catch 捕获，生成一个错误 ToolResultMessage。工具收到的是通过当前 Schema 验证的参数；Schema 能检查形状，业务规则仍要由工具自己验证。
 
 ### 第 3 步：beforeToolCall——前置钩子（可阻止执行）
 
@@ -213,19 +241,20 @@ After： 验证失败 → 报错 → 不执行工具
 | `undefined` | 放行，继续执行工具 |
 | `{ block: true, reason: "危险命令" }` | 阻止执行，生成错误 ToolResultMessage |
 
-**注意**：即使工具被阻止，结果仍然是一条正常的 `ToolResultMessage`，只是 `isError: true`。模型会看到这条错误消息，知道命令被拒绝了，然后决定下一步怎么做（换一个命令，或者跟用户解释为什么不能执行）。**整个过程不会抛异常，不会打断循环。**
+**注意**：即使工具被阻止，结果仍然是一条正常的 `ToolResultMessage`，只是 `isError: true`。模型会看到这条错误消息，知道命令被拒绝了，然后决定下一步怎么做（换一个命令，或者跟用户解释为什么不能执行）。阻止执行本身不会结束循环。前置钩子还可以随阻止结果携带 `terminate`，但整批停止条件要到后面统一判断。
 
 ### 第 4 步：tool.execute——实际执行
 
 前 3 步都通过后，工具的 `execute` 函数被真正调用。回头看一下它的签名：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 execute: (toolCallId, params, signal, onUpdate) => Promise<AgentToolResult>
 ```
 
 四个参数——`toolCallId` 是这次调用的 ID，`params` 是验证过的参数，`signal` 是用于取消的 AbortSignal（用户按 Ctrl+C 时触发）。第四个 `onUpdate` 是什么？
 
-**它解决的是"长任务的进度感知"问题。** 假设 Bash 工具要跑一个 30 秒的命令——如果只有"开始执行"和"执行完成"两个时刻能向外界报告，用户在这 30 秒里只能盯着加载动画。`onUpdate` 让工具能**边执行边向外推消息**：Bash 工具每 100ms 推送一次当前的终端输出，Grep 工具每找到一批匹配就推送一次，Read 工具读取大文件时可以分段报告进度。这些推送被包装成 `tool_execution_update` 事件，最终流向 UI。
+**它解决的是"长任务的进度感知"问题。** 假设 Bash 工具要跑一个 30 秒的命令——如果只有"开始执行"和"执行完成"两个时刻能向外界报告，用户在这 30 秒里只能盯着加载动画。`onUpdate` 让工具能**边执行边向外推消息**：例如 shell 工具可以推送当前累计输出。接口允许其他工具报告进度，但并不保证每个内置工具都会推送，也不规定统一的更新频率。这些推送被包装成 `tool_execution_update` 事件，最终流向 UI。
 
 简单说：**没有 `onUpdate`，工具执行就是黑盒；有了它，工具执行是"可观察的"。** 这是工具能向用户实时汇报进度的关键机制。
 
@@ -244,15 +273,18 @@ execute: (toolCallId, params, signal, onUpdate) => Promise<AgentToolResult>
 | 脱敏 | 把工具返回的敏感信息替换掉 | 返回 `{ content: [{type:"text", text:"[已脱敏]"}] }` |
 | 审计 | 记录工具调用的详细信息 | 读取 result，写日志，返回 `undefined`（不改结果） |
 | 修错 | 把工具的错误结果修正为正常结果 | 返回 `{ isError: false, content: [...] }` |
-| 早停 | 让 Agent 在当前批次后停止 | 返回 `{ terminate: true }` |
+| 停止工具续轮 | 声明本次结果无需自然续轮 | 返回 `{ terminate: true }`；需结合整批结果判断 |
 
-合并语义是字段级覆盖——提供了就替换，没提供就保留原值。
+合并按 `content`、`details`、`usage`、`terminate`、`isError` 等字段分别使用 `??` 取值，不是递归合并。前置阶段直接生成的结果不会再交给 afterToolCall。
+
+**`terminate` 不是紧急刹车。** 当前批次照常处理，只有所有最终结果都带 `terminate: true`，才撤掉“执行了工具就再调模型”的默认续轮。一个结果没有这个标记，整批就不满足条件；steering、follow-up 或 `finishTurn` 的 continue 仍可能让循环继续。要理解的是“这批结果是否需要再问模型”，而不是“第一个工具说停，后面的工具就不跑”。
 
 ### 管道的终点：ToolResultMessage
 
-五步走完，不管中间出了什么状况，最终产物都是一条 `ToolResultMessage`：
+在这条工具结果路径里，成功或失败都会形成 `ToolResultMessage`。下面是数据形状示意，`details.language` 只是示例元数据：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 {
     role: "toolResult",
     toolCallId: "call_abc123",      // 关联到原始 ToolCall
@@ -272,9 +304,9 @@ execute: (toolCallId, params, signal, onUpdate) => Promise<AgentToolResult>
 
 ## 三、并行 vs 串行：一个批次的工具不是"一起跑就完了"
 
-![并行 vs 串行 三阶段设计](assets/260702-ch05-parallel-sequential.svg)
+![并行 vs 串行 三阶段设计](assets/260925-ch05-parallel-sequential.svg)
 
-**配图说明**：顶部"一票否决"决策——只要有一个工具声明 sequential，整批串行。左侧绿色三阶段（顺序准备→并行执行→有序事件），右侧黑色瀑布式串行。底部解释"为什么准备阶段必须顺序"和"何时用串行"。
+**配图说明**：修改文件的工具可以借助执行模式避免同批操作竞争。
 
 ### 模型经常一次调用多个工具
 
@@ -293,11 +325,11 @@ assistantMessage.content = [
 
 ### 但并行不是无脑 Promise.all
 
-如果三个 ToolCall 中有两个是 edit（修改同一个文件），并行执行就会互相覆盖：
+如果两个工具在没有内部协调的情况下同时读改写同一文件，就可能互相覆盖：
 
 ```
-ToolCall 1: edit { path: "app.ts", oldText: "v1", newText: "v2" }
-ToolCall 2: edit { path: "app.ts", oldText: "v3", newText: "v4" }
+ToolCall 1: edit { path: "app.ts", edits: [{ oldText: "v1", newText: "v2" }] }
+ToolCall 2: edit { path: "app.ts", edits: [{ oldText: "v3", newText: "v4" }] }
                      ^^^^^^^^
                      同一个文件！并行执行 → ToolCall 1 的修改被 ToolCall 2 覆盖
 ```
@@ -309,6 +341,7 @@ ToolCall 2: edit { path: "app.ts", oldText: "v3", newText: "v4" }
 Pi 的策略很简单——**只要有一个工具标记为 sequential，整个批次都串行执行**：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 // 检查是否有串行工具
 const hasSequentialToolCall = toolCalls.some(
     (tc) => tools?.find((t) => t.name === tc.name)?.executionMode === "sequential",
@@ -338,7 +371,7 @@ return executeToolCallsParallel(...);
   ToolCall 1: execute ────────────────┐
   ToolCall 2: execute ───────────────┤ Promise.all
   ToolCall 3: execute ───────────────┘
-  // 只有 tool.execute() 并行
+  // execute 与该调用的 afterToolCall 一起并行
 
 阶段 3 - 事件发送（有序）：
   ToolCall 2: emit_end    ← 先完成的先发 tool_execution_end
@@ -349,13 +382,13 @@ return executeToolCallsParallel(...);
   ToolCall 3: emit_result
 ```
 
-为什么这么设计？因为**准备阶段可能有副作用**（beforeToolCall 可能修改共享状态），必须顺序执行。而**结果消息的顺序模型依赖调用顺序**（模型先要求 read 再要求 grep，消息就得按这个顺序排列），所以 ToolResultMessage 必须有序。只有 `tool.execute()` 这一步真正并行。
+为什么这么设计？因为**准备阶段可能有副作用**（beforeToolCall 可能修改共享状态），必须顺序执行。而**结果消息的顺序模型依赖调用顺序**（模型先要求 read 再要求 grep，消息就得按这个顺序排列），所以 ToolResultMessage 必须有序。准备后的执行与后置处理可以并行；各工具的结束事件按完成时间发出，结果消息最后按原始调用顺序输出。
 
-> 还有一个细节：v0.80.2 的 7 个内置工具（read/write/edit/bash/grep/find/ls）**都没有显式声明 `executionMode`**，默认全部 `"parallel"`（`ToolExecutionMode` 类型见 `agent/src/types.ts:41`，运行时只在 `agent-loop.ts:382` 判断是否 `"sequential"`，未显式声明即按并行处理）。那 Edit 工具怎么保证文件安全？答案是工具内部的 `withFileMutationQueue`（文件变更队列，`file-mutation-queue.ts:32-61`）——Edit 在 `edit.ts:312` 调用了它，确保对**同一个文件**的编辑操作串行化。这是工具自己做的第二道防线，无需依赖外层 `executionMode` 声明。**扩展工具如果需要串行，可以显式声明 `executionMode: "sequential"`**。
+> 内置工具没有把所有并发安全交给 executionMode。Edit 还使用 withFileMutationQueue，序列化同一文件的修改；这是进程内的工具防线，不是跨进程文件锁。自定义工具如有顺序依赖，应显式声明 executionMode: "sequential"，或在创建 Agent 时选择全局串行。
 
 ---
 
-## 四、永不抛出：工具出错也是一条消息
+## 四、错误变消息：工具出错也能成为下一步的线索
 
 前面 §二 的五步管道里，每一步出错都被编码成了 `isError: true` 的 ToolResultMessage。看起来错误已经被处理了。
 
@@ -369,21 +402,22 @@ return executeToolCallsParallel(...);
 
 | 哪一步出错 | 怎么处理 | 最终产物 |
 |-----------|---------|---------|
-| 工具未找到 | 直接返回错误结果，不进入管道 | `ToolResultMessage { isError: true, content: "Tool xxx not found" }` |
-| prepareArguments 抛异常 | 被 try-catch 捕获 | `ToolResultMessage { isError: true, content: 异常信息 }` |
-| Schema 验证失败 | 被 try-catch 捕获 | `ToolResultMessage { isError: true, content: 验证错误描述 }` |
-| beforeToolCall 阻止 | 返回阻止结果 | `ToolResultMessage { isError: true, content: 阻止原因 }` |
-| **tool.execute 抛异常** | 被 executePreparedToolCall 的 try-catch 捕获 | `ToolResultMessage { isError: true, content: 异常信息 }` |
-| afterToolCall 抛异常 | 被 finalizeExecutedToolCall 的 try-catch 捕获 | `ToolResultMessage { isError: true, content: 异常信息 }` |
+| 工具未找到 | 直接返回错误结果，不进入管道 | `错误 ToolResultMessage，content 文本为 Tool xxx not found` |
+| prepareArguments 抛异常 | 被 try-catch 捕获 | `错误 ToolResultMessage，content 文本为异常信息` |
+| Schema 验证失败 | 被 try-catch 捕获 | `错误 ToolResultMessage，content 文本为验证错误描述` |
+| beforeToolCall 阻止 | 返回阻止结果 | `错误 ToolResultMessage，content 文本为阻止原因` |
+| **tool.execute 抛异常** | 被 executePreparedToolCall 的 try-catch 捕获 | `错误 ToolResultMessage，content 文本为异常信息` |
+| afterToolCall 抛异常 | 被 finalizeExecutedToolCall 的 try-catch 捕获 | `错误 ToolResultMessage，content 文本为异常信息` |
 
-注意表格的右列——**所有错误的最终形态都是 ToolResultMessage**。没有一种错误会以"抛异常"的形式逃出管道。
+注意表格的右列——**所有错误的最终形态都是 ToolResultMessage**。这是工具业务错误的处理约定，不是整个运行时“永不抛出”的承诺。例如进度事件监听器返回 rejected Promise，等待事件完成时仍可能失败。
 
 ### 关键代码：tool.execute 的双重防护
 
 其中最关键的一层在 `executePreparedToolCall()`——它包住了 `tool.execute()` 这个最容易出错的环节：
 
 ```typescript
-// packages/agent/src/agent-loop.ts:628-669
+// 教学简化：省略外围定义，展示数据形状或关键步骤
+// packages/agent/src/agent-loop.ts
 async function executePreparedToolCall(prepared, signal, emit) {
     const updateEvents: Promise<void>[] = [];
     let acceptingUpdates = true;          // 工具 Promise settle 后关闭
@@ -492,41 +526,23 @@ Error: ENOENT: no such file or dir       {
 
 回源码看 Pi 自己的工具是怎么做的，你会发现它**绝不靠框架兜底**，而是工具内部就把错误描述写得很具体：
 
-**Read 工具**（`read.ts:275`）——越界时附上文件总行数：
+**Read 工具**（`read.ts`）——越界时附上文件总行数：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 if (startLine >= allLines.length) {
     throw new Error(`Offset ${offset} is beyond end of file (${allLines.length} lines total)`);
 }
 ```
 
-**Edit 工具**（`edit.ts:330`）——附上文件路径和原始错误：
+**Edit 工具**（`edit.ts`）——附上文件路径和原始错误：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 throw new Error(`Could not edit file: ${path}. ${errorMessage}.`);
 ```
 
-**Bash 工具**（`bash.ts:390-407`）——这段是教科书级别的"主动识别 + 重新包装"：
-
-```typescript
-} catch (err) {
-    const snapshot = await finishOutput();              // 先把已经输出的内容固定下来
-    const { text } = formatOutput(snapshot, "");
-    if (err instanceof Error && err.message === "aborted") {
-        throw new Error(appendStatus(text, "Command aborted"));
-        //                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-        //                  重新包装：附上"中止前的输出" + "中止状态"
-    }
-    if (err instanceof Error && err.message.startsWith("timeout:")) {
-        const timeoutSecs = err.message.split(":")[1];
-        throw new Error(appendStatus(text, `Command timed out after ${timeoutSecs} seconds`));
-    }
-    if (exitCode !== 0 && exitCode !== null) {
-        throw new Error(appendStatus(outputText, `Command exited with code ${exitCode}`));
-    }
-    throw err;    // ← 关键：识别不了的异常，原样抛出，交给框架兜底
-}
-```
+**Shell 工具**——bash 与 powershell 共享的执行层会保留已经输出的文本，并给取消、超时、非零退出码附上具体状态。非零退出码在正常返回路径检查；catch 负责处理执行过程中的异常，不应把两段代码误写在一个 catch 里。
 
 注意 Bash 的策略——它**主动识别**已知的错误类型（中止、超时、非零退出码），每种都用 `appendStatus(text, ...)` 把"已经输出的内容"和"具体原因"打包成新的 Error。只有遇到实在识别不了的异常，才 `throw err` 原样抛出。
 
@@ -538,14 +554,15 @@ throw new Error(`Could not edit file: ${path}. ${errorMessage}.`);
 └── 目的：给模型提供"为什么失败、怎么改才对"的具体线索
 
 第二层（框架兜底，被动）：executePreparedToolCall 的 catch
-└── 只在工具没识别出来时生效
+└── 接住工具抛出的错误，包括工具已经包装好描述的错误
 └── 不创造新的错误描述，只把 error.message 原样透传给模型
-└── 目的：保证任何异常都不会穿透到 Agent Loop
+└── 目的：把工具失败转为模型可处理的结果
 ```
 
 `executePreparedToolCall` 里的兜底 catch 用的就是工具自己抛的 `error.message`：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 } catch (error) {
     return {
         result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
@@ -556,13 +573,14 @@ throw new Error(`Could not edit file: ${path}. ${errorMessage}.`);
 }
 ```
 
-`createErrorToolResult` 函数体只有三行（`agent-loop.ts:716-721`），它不做任何"统一描述"——工具写的 message 是什么，模型就看到什么。**所以工具内部包装得越具体，模型看到的错误信息就越有用。**
+`createErrorToolResult` 函数体只有三行（`agent-loop.ts`），它不做任何"统一描述"——工具写的 message 是什么，模型就看到什么。**所以工具内部包装得越具体，模型看到的错误信息就越有用。**
 
 ### 写自定义工具时的最佳实践
 
 借鉴 Bash 工具的写法，自定义工具的 `execute` 应该长这样：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 execute: async (id, params, signal, onUpdate) => {
     try {
         // ... 业务逻辑
@@ -590,7 +608,7 @@ execute: async (id, params, signal, onUpdate) => {
 
 ### 一句话总结
 
-工具执行出错时，Pi 不抛异常打断循环，而是把错误编码成一条 `isError: true` 的 ToolResultMessage 发给模型。这里的关键是**两层分工**：工具内部尽量识别已知错误，包装成"为什么错、怎么改"的具体描述（参考 Bash 工具的 try-catch）；框架兜底层只在工具没识别出来时接管，把 `error.message` 原样透传给模型。模型拿到具体的错误信息后，自己决定下一步——重试、换路径、向用户解释。这就是为什么 Pi 的 Agent Loop 能在工具频繁失败的真实场景下保持稳定运行。
+工具执行出错时，Pi 不抛异常打断循环，而是把错误编码成一条 `isError: true` 的 ToolResultMessage 发给模型。这里的关键是**两层分工**：工具内部尽量识别已知错误，包装成"为什么错、怎么改"的具体描述（参考 Bash 工具的 try-catch）；框架层接住工具最终抛出的错误，把 `error.message` 原样透传给模型。模型拿到具体的错误信息后，自己决定下一步——重试、换路径、向用户解释。这就是为什么 Pi 的 Agent Loop 能在工具频繁失败的真实场景下保持稳定运行。
 
 ---
 
@@ -603,6 +621,7 @@ execute: async (id, params, signal, onUpdate) => {
 Read 工具要读文件，最直觉的写法：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 const content = fs.readFileSync(path, "utf-8");
 ```
 
@@ -612,11 +631,12 @@ const content = fs.readFileSync(path, "utf-8");
 
 ### 解法：工具不直接调系统 API，而是调接口
 
-Pi 的每个工具都不直接调用 `fs`、`child_process` 等系统 API。它定义一个最小化的接口，工具只依赖接口，不依赖具体实现。
+Pi 把工具的主要文件与命令操作抽成最小接口。默认实现仍会调用系统 API，但工具可以接收替代实现，不必把执行环境写死。
 
 以 Read 工具为例：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 export interface ReadOperations {
     readFile: (absolutePath: string) => Promise<Buffer>;
     access: (absolutePath: string) => Promise<void>;
@@ -627,6 +647,7 @@ export interface ReadOperations {
 Read 工具的 execute 函数里，所有文件操作都通过 `ops` 对象调用：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 execute: async (toolCallId, params, signal, onUpdate, ctx) => {
     const ops = options?.operations ?? defaultReadOperations;
     await ops.access(absolutePath);        // 通过接口检查权限
@@ -650,24 +671,20 @@ execute: async (toolCallId, params, signal, onUpdate, ctx) => {
 Operations 在**工具创建时**被闭包捕获。后续每次执行都用同一套实现。不同环境注入不同的 Operations 实现，工具代码一行不用改：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 // 本地执行（默认）
 const tool = createReadToolDefinition(cwd);  // 用 defaultReadOperations
 
 // 单元测试（Mock）
 const tool = createReadToolDefinition(cwd, {
     operations: {
-        readFile: () => Buffer.from("mock file content"),  // 不需要创建真实文件
-        access: () => {},  // 不抛异常就是文件存在
+        readFile: async () => Buffer.from("mock file content"),  // 不需要创建真实文件
+        access: async () => {},  // 不抛异常就是文件存在
     }
 });
 
-// 远程执行（SSH，假设）
-const tool = createReadToolDefinition(cwd, {
-    operations: {
-        readFile: (path) => sshExec(`cat ${path}`),
-        access: (path) => sshExec(`test -r ${path}`),
-    }
-});
+// 远程实现应封装为同样的 Promise 接口；路径作为数据交给远程传输层，
+// 不要把未经转义的 path 拼接进 shell 命令。
 ```
 
 ### 每个工具定义自己需要的最小接口
@@ -680,13 +697,14 @@ const tool = createReadToolDefinition(cwd, {
 | Write | `WriteOperations` | `writeFile`, `mkdir` |
 | Edit | `EditOperations` | `readFile`, `writeFile`, `access` |
 | Bash | `BashOperations` | `exec` |
+| PowerShell | `PowerShellOperations`（复用 BashOperations） | `exec` |
 | Grep | `GrepOperations` | `isDirectory`, `readFile` |
 | Find | `FindOperations` | `exists`, `glob` |
 | Ls | `LsOperations` | `exists`, `stat`, `readdir` |
 
 Read 工具不需要写文件，所以 `ReadOperations` 没有 `writeFile`。Grep 工具只需要判断路径和读文件内容来显示上下文，所以它的接口最精简。**每个工具只声明自己需要的方法，不多不少。**
 
-> 代码来源：`read.ts:43-50` / `write.ts:25-30` / `edit.ts:74-81` / `bash.ts:40-58` / `grep.ts:51-56` / `find.ts:41-46` / `ls.ts:32-39`
+> 代码来源：`read.ts` / `write.ts` / `edit.ts` / `bash.ts` / `grep.ts` / `find.ts` / `ls.ts`
 
 ---
 
@@ -696,9 +714,9 @@ Read 工具不需要写文件，所以 `ReadOperations` 没有 `writeFile`。Gre
 
 **1. 分层接口递进法**：基础层只管"能描述"（Tool），运行时层加"能执行"（AgentTool），产品层加"能展示和扩展"（ToolDefinition）。通过包装器桥接层间差异。
 
-**2. 管道+钩子模式**：核心流程是一条管道（prepare → validate → execute），管道前后各有一个钩子（before/after），可以拦截或修改。管道内的每一步出错都不抛异常，统一编码为正常消息。
+**2. 管道+钩子模式**：核心流程是一条管道（prepare → validate → execute），管道前后各有一个钩子（before/after），可以拦截或修改。准备失败走错误出口，执行后的结果可由后置钩子改写。
 
-**3. 错误即消息原则**：工具执行的每一步出错，都统一编码成一条 `isError: true` 的 ToolResultMessage 发给模型。模型自己根据错误信息决定下一步——重试、换路径、向用户解释。即便未知异常也用 `String(error)` 兜底成消息，绝不让原始异常穿透打断 Agent Loop。
+**3. 错误即消息原则**：工具执行的每一步出错，都统一编码成一条 `isError: true` 的 ToolResultMessage 发给模型。模型自己根据错误信息决定下一步——重试、换路径、向用户解释。工具抛出的未知错误也会转成描述文本；事件派发等框架故障仍须单独处理。
 
 **4. Operations 抽象法**：工具不直接调用系统 API，而是通过最小化的 Operations 接口间接调用。测试可以 Mock，远程可以 SSH，不改工具代码。
 
@@ -726,7 +744,7 @@ ToolResultMessage { content: 文件内容, isError: false }
     ▼ 追加到对话历史，下一轮发给模型
 ```
 
-工具不是简单的函数调用，而是一条受控管道。参数验证挡住垃圾数据，钩子拦截住危险操作，Operations 抽象让同一份代码既能本地跑也能远程跑。所有工具错误——从参数验证失败到 execute 抛出的未知异常——都被翻译成一条 `isError: true` 的 ToolResultMessage 发给模型，让模型自己决定下一步，循环永远不会因为工具出错而崩。
+工具不是简单的函数调用，而是一条受控管道。参数验证挡住垃圾数据，钩子拦截住危险操作，Operations 抽象让同一份代码既能本地跑也能远程跑。所有工具错误——从参数验证失败到 execute 抛出的未知异常——都被翻译成一条 `isError: true` 的 ToolResultMessage 发给模型，让模型自己决定下一步，让常见工具失败成为可恢复的反馈。
 
 但还有一个问题：工具执行时发出的 `tool_execution_start`、`tool_execution_update`、`tool_execution_end` 事件，到底是谁在监听？Agent 内核为什么完全不需要知道 UI 的存在？
 
@@ -734,16 +752,12 @@ ToolResultMessage { content: 文件内容, isError: false }
 
 ---
 
-> **本章关键源码索引**：
-> - `packages/ai/src/types.ts:433-437` — Tool（第一层）
-> - `packages/agent/src/types.ts:371-394` — AgentTool（第二层）
-> - `packages/coding-agent/src/core/extensions/types.ts:435-482` — ToolDefinition（第三层）
-> - `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts:5-18` — wrapToolDefinition（包装器）
-> - `packages/agent/src/agent-loop.ts:562-626` — prepareToolCall（五步管道的前 3 步）
-> - `packages/agent/src/agent-loop.ts:628-669` — executePreparedToolCall（第 4 步 + 框架兜底 catch）
-> - `packages/agent/src/agent-loop.ts:671-714` — finalizeExecutedToolCall（第 5 步）
-> - `packages/agent/src/agent-loop.ts:716-721` — createErrorToolResult（错误消息搬运函数）
-> - `packages/coding-agent/src/core/tools/bash.ts:390-407` — Bash 工具内部主动识别错误的典范
-> - `packages/coding-agent/src/core/tools/read.ts:275` — Read 工具附加文件总行数
-> - `packages/coding-agent/src/core/tools/edit.ts:330` — Edit 工具附加文件路径
-> - `packages/coding-agent/src/core/tools/read.ts:43-50` — ReadOperations（Operations 抽象）
+
+---
+
+> **本章关键源码索引**（Pi v0.87.1，固定发布提交）：
+> - [packages/agent/src/agent-loop.ts](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/agent/src/agent-loop.ts) — 准备、执行、最终处理工具批次
+> - [packages/agent/src/types.ts](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/agent/src/types.ts) — AgentTool 与 before/after 契约
+> - [packages/coding-agent/src/core/tools/index.ts](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/coding-agent/src/core/tools/index.ts) — 八种内置工具
+> - [packages/coding-agent/src/core/tools/powershell.ts](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/coding-agent/src/core/tools/powershell.ts) — PowerShell 工具
+> - [packages/coding-agent/src/core/extensions/types.ts#L455](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/coding-agent/src/core/extensions/types.ts#L455) — ToolDefinition

@@ -1,8 +1,15 @@
+> 本次修订仅覆盖源码精读 10 章的 TypeScript 网页、Markdown 与配图，源码固定为 [Pi v0.87.1](https://github.com/earendil-works/pi/releases/tag/v0.87.1)（`f07218c4d4bbc12bef056a7058c3dd49dfe41abe`）。实战篇、Skill、Python、Notebook 与既有 PDF 未更新；旧 Python 文件和直达页面保留。本轮未生成 PDF；源码精读 TS 版的静态站点已发布到本仓库的 GitHub Pages。
+
 
 
 > Pi源码解读和二次开发实战
+>
+> 🪞 **本仓库是镜像站**：内容来自原仓库 [buchidonggua/dg-ai-notes](https://github.com/buchidonggua/dg-ai-notes)（作者：冬瓜），本仓只跟进「源码精读 · TypeScript」部分，版权归原作者所有（[代码 MIT](./LICENSE) / [文档 CC-BY-SA-4.0](https://creativecommons.org/licenses/by-sa/4.0/)）。所解读的上游 SDK 是 [earendil-works/pi](https://github.com/earendil-works/pi)。
 
-> 🌐 **在线阅读**：[dg-ai-notes.pages.dev](https://dg-ai-notes.pages.dev) —— 双轨教程 · 沉浸式阅读 · 深浅色主题
+> 🌐 **在线阅读**
+>
+> - 🪞 **本仓镜像（GitHub Pages）**：[magicspirit007.github.io/pi-latest](https://magicspirit007.github.io/pi-latest/) —— 源码精读 TS 版随本仓更新
+> - 🏠 **原站**：[dg-ai-notes.pages.dev](https://dg-ai-notes.pages.dev) —— 双轨教程 · 沉浸式阅读 · 深浅色主题
 >
 > [![在线电子书首页](./assets/web-home.png)](https://dg-ai-notes.pages.dev)
 
@@ -20,9 +27,9 @@
 
 ### 🔬 源码解读 · 10 章拆完一个生产级 SDK
 
-不是贴代码加注释，而是每章回答「是什么 / 怎么做 / 为什么」：从三层架构、Agent Loop 一路讲到上下文工程、会话管理，把 Pi 的设计取舍讲透。**TypeScript + Python 双版本**对照，30+ 配图，还配了一个可单步运行、随便改参数的 [Agent Loop 实验场](./pi-agent/notebooks/agent-loop.ipynb)。
+不是贴代码加注释，而是每章回答「是什么 / 怎么做 / 为什么」：从三层架构、Agent Loop 一路讲到上下文工程、会话管理，把 Pi 的设计取舍讲透。**TypeScript 版已更新至 Pi v0.87.1**，配有 25 张新版源码图。原有 [Agent Loop 实验场](./pi-agent/notebooks/agent-loop.ipynb) 保留旧版内容。
 
-**怎么读**：[TS 版目录](./pi-agent/pi_source_dive/typescript/) · [Python 版目录](./pi-agent/pi_source_dive/python/) · [在线版](https://dg-ai-notes.pages.dev) · [PDF 下载](../../releases)
+**怎么读**：[TS 版目录](./pi-agent/pi_source_dive/typescript/) · [在线版](https://magicspirit007.github.io/pi-latest/) · [PDF 下载（原仓库 Releases）](https://github.com/buchidonggua/dg-ai-notes/releases)
 
 ### 🚀 实战案例 · 7 章搭一个能上线的 Agent
 
@@ -32,7 +39,7 @@
 
 ### 🧩 Skill 应用 · 让你的 AI 助手秒懂 pi-agent
 
-**dg-piagent** 是与教程同步维护的 SDK 开发助手 skill（API 核对到 pi-coding-agent `v0.83.0`）。它从两个视角装订成册：**SDK 功能视角**可当官方文档查，**场景应用视角**可当学习手册翻。装进智能体后，写 pi-agent 代码不用再翻文档——**你只管提需求，AI 查 skill 完成开发**。
+**dg-piagent** 是配套的 SDK 开发助手 skill（API 核对到 pi-coding-agent `v0.83.0`）。它从两个视角装订成册：**SDK 功能视角**可当官方文档查，**场景应用视角**可当学习手册翻。装进智能体后，写 pi-agent 代码不用再翻文档——**你只管提需求，AI 查 skill 完成开发**。
 
 **快速上手示例**（装好后对 AI 直接说人话）：
 
@@ -66,7 +73,7 @@ skill 里还沉淀了作者踩过的坑与最佳实践（比如工具报错时�
 |------|------|----------|
 | 🌐 **Web 在线版**（推荐） | https://dg-ai-notes.pages.dev | PC 端沉浸式阅读，双轨切换 + 深浅色主题 |
 | 📥 **Markdown 下载版** | [pi-agent/](./pi-agent/) 目录下两系列 | 下载到本地，配合 AI 边读边问、对照源码 |
-| 📕 **PDF 版** | [Releases](../../releases) | 离线阅读、打印、长期存档（源码精读篇） |
+| 📕 **PDF 版** | [原仓库 Releases](https://github.com/buchidonggua/dg-ai-notes/releases) | 离线阅读、打印、长期存档（源码精读篇） |
 
 ---
 
@@ -115,4 +122,5 @@ skill 里还沉淀了作者踩过的坑与最佳实践（比如工具报错时�
 ## 🙏 Acknowledgments
 
 - [Pi-Agent](https://github.com/earendil-works/pi) 官方团队 —— 没有他们的开源，就没有这本笔记
+- [buchidonggua/dg-ai-notes](https://github.com/buchidonggua/dg-ai-notes)（冬瓜）—— 本仓库内容与配图的原出处
 - 所有引用的开源项目作者

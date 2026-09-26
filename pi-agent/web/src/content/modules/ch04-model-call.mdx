@@ -4,22 +4,23 @@ module: M04
 displayOrder: 4
 status: published
 variant: ts
-summary: 一行代码调 30+ 供应商。本章看 Pi 如何用 Provider 抽象抹平各家 API 差异。
+sourceVersion: "0.87.1"
+summary: Models、ModelRuntime 与 Provider 分工，统一 transcript 如何转换为模型请求。
 prev: ch03-agent-loop
 next: ch05-tools
 diagrams:
-  - id: 260702-ch04-provider-formats
-    file: /assets/260702-ch04-provider-formats.svg
+  - id: 260925-ch04-provider-formats
+    file: /assets/260925-ch04-provider-formats.svg
     caption: 四个 Provider 的消息格式差异
-  - id: 260702-ch04-translation-company
-    file: /assets/260702-ch04-translation-company.svg
+  - id: 260925-ch04-translation-company
+    file: /assets/260925-ch04-translation-company.svg
     caption: 翻译公司三层架构
-  - id: 260702-ch04-translator-5-steps
-    file: /assets/260702-ch04-translator-5-steps.svg
+  - id: 260925-ch04-translator-5-steps
+    file: /assets/260925-ch04-translator-5-steps.svg
     caption: 翻译器内部 5 步骨架
-  - id: 260702-ch04-thinking-levels
-    file: /assets/260702-ch04-thinking-levels.svg
-    caption: ThinkingLevel 五级思考刻度
+  - id: 260925-ch04-thinking-levels
+    file: /assets/260925-ch04-thinking-levels.svg
+    caption: 思考级别、模型能力与协议参数的映射
 counterpart: ch04-model-call.python
 ---
 
@@ -32,12 +33,13 @@ import Diagram from '../../components/Diagram.astro';
 但当时我们用了一行代码就跳过了：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 const stream = streamSimple(model, context, options);
 ```
 
-这行代码看起来平平无奇。但如果你打开 `packages/ai/src/api/` 目录，会发现里面有几十个文件、10 种 API 翻译器（含 1 个 images 专用），每个都上千行代码。**一行调用的简洁背后，是整个 AI 抽象层的精心设计。**
+这行代码看起来平平无奇。但如果你打开 `packages/ai/src/api/` 目录，会发现不同协议的请求构建、流式响应和兼容处理分布在多份实现中。**一行调用的简洁背后，是整个 AI 抽象层的精心设计。**
 
-这一章就来拆开这一行代码：Pi 怎么做到用同一个接口调用 30 多个不同的模型？如果你想接入一个新模型，需要做什么？
+这一章就来拆开这一行代码：Pi 怎么做到用同一个接口调用 不同供应商提供的模型？如果你想接入一个新模型，需要做什么？
 
 ---
 
@@ -54,20 +56,23 @@ Agent Loop 要调用模型，但市面上有几十家模型供应商——Anthro
 这条消息在 Pi 内部是这样存的（统一格式）：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 { role: "user", content: "帮我读一下 main.ts", timestamp: 1748697600000 }
 ```
 
 但要把这条消息发给不同模型，就必须"翻译"成各家要求的格式。同样是这一句话，四个 Provider 要求的长相完全不同：
 
-**Anthropic（Claude）**——消息内容必须是数组，每项带 `type` 字段：
+**Anthropic（Claude）**——这里展示内容块数组写法，每项带 `type`；纯文本也可使用字符串：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 { role: "user", content: [{ type: "text", text: "帮我读一下 main.ts" }] }
 ```
 
 **OpenAI（GPT）**——格式看起来差不多，但字段语义有细微差异（比如工具结果消息的处理方式完全不同）：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 { role: "user", content: "帮我读一下 main.ts" }
 // 但如果消息里包含工具结果，OpenAI 要求单独的 { role: "tool" } 消息，
 // 而 Anthropic 把工具结果合并到 user 消息里
@@ -76,21 +81,23 @@ Agent Loop 要调用模型，但市面上有几十家模型供应商——Anthro
 **Google（Gemini）**——字段名从 `content` 变成了 `parts`，结构更扁平：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 { role: "user", parts: [{ text: "帮我读一下 main.ts" }] }
 ```
 
 **Bedrock（AWS）**——在 AWS 自己的结构上又包了一层：
 
 ```typescript
+// 教学简化：省略外围定义，展示数据形状或关键步骤
 { role: "user", content: [{ text: "帮我读一下 main.ts" }] }
 // 注意：Bedrock 的 text 没有 type 字段，和 Anthropic 不一样
 ```
 
 **连最简单的纯文本消息都有四种写法。** 字段名不同（`content` vs `parts`），结构不同（有的要 `type` 字段，有的不要）。
 
-<Diagram file="/assets/260702-ch04-provider-formats.svg" caption="四个 Provider 的消息格式差异" id="260702-ch04-provider-formats" />
+<Diagram file="/assets/260925-ch04-provider-formats.svg" caption="四个 Provider 的消息格式差异" id="260925-ch04-provider-formats" />
 
-**配图说明**：顶部是 Pi 内部统一格式，下面四个并排列出同一条消息在 Anthropic/OpenAI/Google/Bedrock 下的真实长相。每张卡片底部用红色标出"这家独特的地方"——数组+type、独立 role、parts 替换 content、无 type 等。底部还列出四个差异维度的全景。
+**配图说明**：这里比较协议格式；同一供应商也可能提供多种 API。
 
 ### 不只是消息格式——四个维度全都不一样
 
@@ -99,432 +106,263 @@ Agent Loop 要调用模型，但市面上有几十家模型供应商——Anthro
 | 维度 | 差在哪 | 举个例子 |
 |------|--------|---------|
 | **消息格式** | 同一条消息，字段名和结构不同 | Anthropic 用 `content[]`，Google 用 `parts[]` |
-| **流式传输** | 模型的"逐字返回"机制不同 | Anthropic 发原始 SSE 文本要自己解析，OpenAI 的 SDK 直接返回结构化 chunk |
+| **流式传输** | 模型的"逐字返回"机制不同 | SSE、SDK 事件流和 WebSocket 等传输路径需要适配 |
 | **思考模式** | "让模型深度思考"的参数完全不同 | Anthropic 用 `thinking.budget_tokens`，OpenAI 用 `reasoning_effort` |
 | **缓存控制** | "标记不变内容"的方式不同 | Anthropic 打 `cache_control` 标记，Bedrock 插入 `cachePoint` 节点 |
 
-每个维度单独看都不复杂，但四个维度乘以 30 多个 Provider，组合起来的差异量是巨大的。
+每个维度单独看都不复杂，但这些维度再乘以不同 Provider 的能力差异，组合起来的差异量是巨大的。
 
 现在问题来了：**Agent Loop 只有一行 `streamSimple(model, context)`，它不可能为每个 Provider 写一套不同的逻辑。那它怎么应对这么多差异？**
 
 ---
 
-## 二、解法：三层架构，各管一件事
+## 二、解法：翻译公司里，先分清客户经理和翻译员
 
-你可能会想到一个直觉的答案：给所有 Provider 做一层封装，让它们看起来都一样——输入相同、输出相同。
+用翻译公司作比喻：客户交来一段话，前台找到合适的人，翻译员负责读懂对方的协议，最后按统一格式交回报告。
 
-**没错，Pi 正是这么做的。** 但具体怎么"让它们看起来都一样"？Pi 的方案是把这件事拆成三层，每层有明确的分工：
+但这里有个容易混淆的角色：**Provider 是供应商，API 是协议**。一家供应商可能提供几种协议，几家供应商也可能都提供 OpenAI 兼容接口。把“每家一个翻译器”写死，复用的机会就丢了。
+
+### 第一层：Models 和 Provider，负责把请求交给对的人
+
+v0.87.1 的推荐入口是 `Models` 集合：它管理 Provider，按模型所属供应商路由请求。Provider 再负责自己的目录、认证和流式行为，底下可以复用 API 实现。
 
 ```
-第一层 · 统一入口    →  "接收请求，查出该找谁处理"
-第二层 · 事件协议    →  "约定输出格式——不管谁处理，交回来的都是这个样子"
-第三层 · 翻译器      →  "真正干活的人——每个翻译器精通一种 Provider 的方言"
+应用 / Agent Loop
+    │ models.streamSimple(model, context, options)
+    ▼
+Models：按 model.provider 找到 Provider
+    ▼
+Provider：目录、认证、请求行为
+    ▼
+API 实现：把 TranscriptContext 翻译成线上协议
+    ▼
+供应商响应 → 统一的 AssistantMessageEventStream
 ```
 
-用一个类比来理解。想象一个国际翻译公司：
+模型对象的两个字段因此不能混为一谈：`provider` 回答“由谁提供服务”，`api` 回答“按什么协议交谈”。同一 API 适配器可以被不同 Provider 复用，而它们的认证和请求头仍各自管理。
 
-- **第一层（前台）**：客户进门，前台问"你要翻译什么语言？"，然后查通讯录找到对应的翻译员，把工作派给他
-- **第二层（标准报告模板）**：不管翻译员翻译的是法语、日语还是阿拉伯语，最终交出来的报告都必须用公司统一的格式——封面、正文、审签栏，格式固定
-- **第三层（翻译员们）**：每个翻译员精通一种语言，内部怎么翻译是他们的事，但输出必须符合第二层的标准格式
+<Diagram file="/assets/260925-ch04-translation-company.svg" caption="Models、Provider 和 API 适配器的分工" id="260925-ch04-translation-company" />
 
-**关键点：前台（第一层）和翻译员（第三层）之间靠标准报告（第二层）连接。前台不需要懂外语，翻译员不需要懂公司流程。**
+### 一个还在使用的入口：/compat
 
-Agent Loop 就是那个"客户"——它把请求交给前台（第一层），拿到标准格式的报告（第二层），从不直接接触翻译员（第三层）。
+读默认 coding-agent 源码时，你仍会遇见从 `@earendil-works/pi-ai/compat` 导入的 `getModel`、`stream` 和 `streamSimple`。这个兼容入口保留全局模型目录、API 注册表及原有调用方式；它不是主入口的同名导出。
 
-<Diagram file="/assets/260702-ch04-translation-company.svg" caption="翻译公司三层架构" id="260702-ch04-translation-company" />
+兼容入口也先 `normalizeContext()`，内置模型会优先走相应的内置 Provider；自定义 API 注册仍有注册表分派路径。因此不能把现在的整个入口概括成“查一次 model.api 就完了”。
 
-**配图说明**：从上到下四层——客户（Agent Loop）→ 前台（stream）→ 标准报告协议（12 种事件）→ 翻译员们（4 个 Provider）。左侧标"通讯录"（注册表），右侧标 streamSimple 是入口的便捷包装。所有翻译员最终都要吐出统一事件流回 Agent Loop。
+| 使用场景 | 入口 |
+|----|----|
+| 新建独立模型调用应用 | 主入口的 `createModels`，配合 `providers/*` 工厂 |
+| 需要全部内置供应商 | `providers/all` 的 `builtinModels()` |
+| 阅读旧调用方式、保持现有代码可用 | `/compat` 的全局 `getModel`、`streamSimple` 等 |
+| 嵌入 coding-agent，复用它的配置与认证 | `ModelRuntime` + `createAgentSession()` |
 
-下面逐层展开。
+### 第二层：先把上下文变成统一 transcript
 
-### 第一层：统一入口
-
-入口函数叫 `stream()`，代码极其简单：
+从应用看，`Context` 仍可写成 `{ systemPrompt, messages, tools }`。这是方便调用者的简写。Provider 收到的却是 `TranscriptContext`，提示词和工具声明已经放进 `messages` 中的 system 消息。
 
 ```typescript
-// compat.ts
-export function stream(model, context, options?) {
-  const provider = resolveApiProvider(model.api);  // 查表：这个model该找谁？
-  return provider.stream(model, context, options);  // 把工作派给翻译器
-}
+// 教学简化：省略外围定义，展示数据形状或关键步骤
+// 类型关系示意，省略其他字段
+Context
+  → normalizeContext()
+  → TranscriptContext { messages: Message[] }
+  → Provider / API 实现
 ```
 
-就两步：**查表，派活。** `model.api` 是一个字符串（如 `"anthropic-messages"`），系统启动时已经把所有翻译器注册进了一个"通讯录"（查表）。
+为什么多一道门？假设会话中途换了系统指令，或卸载一个工具。只看当前配置，你知道“现在是什么”，却不知道“何时变的”。transcript 能记录这些变化，让恢复会话和切换分支有依据。第 6 章讲数据结构，第 10 章讲如何落盘。
 
-这个"通讯录"长这样：
+自定义 API 实现不能再直接读取 `context.systemPrompt` 和 `context.tools`，应根据需求使用 `getCurrentSystemPrompt(context.messages)`、`getCurrentTools(context.messages)` 或 transcript 解析工具。
 
-```typescript
-const BUILTIN_APIS = [
-  ["anthropic-messages",       anthropicMessagesApi()],      // Claude 的翻译器
-  ["openai-completions",       openAICompletionsApi()],      // GPT 的翻译器
-  ["google-generative-ai",     googleGenerativeAIApi()],     // Gemini 的翻译器
-  ["bedrock-converse-stream",   bedrockConverseStreamApi()], // Bedrock 的翻译器
-  // ... 还有 5 个
-];
-```
+### 第三层：标准报告——统一事件流
 
-左边是 key（"工号"），右边是翻译器（"翻译员"）。`model.api` 的值就是 key——拿 key 查表，找到翻译器，调用它。整个入口层不处理任何业务逻辑，纯粹是一个路由器。
-
-### 第二层：事件协议
-
-翻译器把请求发给模型后，模型会流式返回内容（一个字一个字地"吐"出来）。如果每个翻译员都按自己的方式吐，前台就疯了。所以第二层约定了一套统一的输出格式。
-
-Pi 规定：不管底层是哪家模型，翻译器都必须输出**统一的事件流**，事件类型一共 12 种：
+输入统一以后，输出也要统一。不管底下用哪个 SDK，Agent Loop 接收的都是以下事件族：
 
 ```
-AssistantMessageEvent（12 种）
-│
-├── start                              ← 流开始了
-│
-├── text_start → text_delta → ... → text_end       ← 模型在输出文字
-├── thinking_start → thinking_delta → ... → thinking_end  ← 模型在思考
-├── toolcall_start → toolcall_delta → ... → toolcall_end  ← 模型要调工具
-│
-├── done   (reason: stop / length / toolUse)   ← 正常结束
-└── error  (reason: error / aborted)           ← 出错了
+start
+  text_start → text_delta → text_end
+  thinking_start → thinking_delta → thinking_end
+  toolcall_start → toolcall_delta → toolcall_end
+done 或 error
 ```
 
-你不需要记住全部 12 种。只需要理解模式：**模型回复的内容分三类（文字、思考、工具调用），每类都有"开始→逐字增量→结束"三步，再加上流开始和流结束两个信号。**
+在这个版本里是 12 种事件，但记住族群比背数字更有用：文字、思考、工具调用都可以逐段到达，最终必须收尾。
 
-每类内容为什么是三步？因为这是流式输出——翻译器先告诉你"文字要开始了"（text_start），然后逐字推送（text_delta，可能有很多个），最后告诉你"文字结束了"（text_end）。这样 Agent Loop 可以做到逐字渲染——你看到的 AI 回复一个字一个字蹦出来，就是这个机制。
+**并非每个事件都有 `partial`。** start 和内容增量事件带处理中消息；done 带最终 `message`；error 带失败的 `error` 消息。请求准备阶段就失败时，还可以没有 start，直接以 error 结束。消费者如果假定第一条永远是 start，就会漏掉这类错误。
 
-还有一个重要约定：每个事件都携带 `partial: AssistantMessage`——当前消息的完整快照。第 3 章讲的"原地替换"就是这个：每次收到事件，用 `partial` 覆盖 context 中最后一条消息，不用自己拼接增量。
+### 翻译器内部：五步骨架仍然成立
 
-### 第三层：翻译器
+<Diagram file="/assets/260925-ch04-translator-5-steps.svg" caption="翻译器内部 5 步骨架" id="260925-ch04-translator-5-steps" />
 
-翻译器是真正干活的角色。每个翻译器对应一种 API（如 Anthropic、OpenAI），负责把统一格式翻译成该 Provider 的私有格式，再把响应翻译回统一事件。
+1. 准备客户端和认证。
+2. 把 transcript、工具和选项转换成供应商请求。
+3. 发出请求。
+4. 把响应中的文本、思考和工具片段转换成 Pi 事件。
+5. 发送 done 或 error，并结束事件流。
 
-所有翻译器都遵循同一个 5 步工作流程：
+真正费力的仍是第 2、4 步。比如 Anthropic 的 tool_use 要变成 Pi 的 toolCall，Google 的 parts 要变成文字、图片或函数调用块；工具调用 ID、思考签名和中途切换模型时的兼容处理，也都在这个边界完成。
 
-<Diagram file="/assets/260702-ch04-translator-5-steps.svg" caption="翻译器内部 5 步骨架" id="260702-ch04-translator-5-steps" />
-
-**配图说明**：垂直 5 步管道——创建客户端→构建请求参数→发送请求→处理响应流→发送终止事件。第 2 步和第 4 步是工作量所在（红色边框高亮）。右侧失败分支汇聚成统一 error 事件。
-
-```
-翻译器(model, context, options)
-│
-├── 1. 创建客户端
-│      用 API Key 初始化连接。就像翻译员确认自己带了字典。
-│
-├── 2. 构建请求参数
-│      把统一格式的消息、工具定义、系统提示，翻译成 Provider 的私有格式。
-│      比如 Google 要 content → parts，这一步就做这个转换。
-│
-├── 3. 发送请求
-│      通过 SDK 或直接 HTTP 发给模型。等模型开始响应。
-│
-├── 4. 处理响应流
-│      模型流式返回内容。翻译器把 Provider 的私有事件格式，
-│      翻译成第二层要求的 12 种统一事件。
-│
-└── 5. 发送终止事件
-       成功 → push done；失败 → push error。流必须终止。
-```
-
-第 2 步（请求翻译）和第 4 步（响应翻译）是核心工作量所在，也是每个翻译器上千行代码的主要原因。
-
-以 Anthropic 为例，第 4 步的翻译规则（把 Anthropic 的私有事件名翻译成 Pi 的统一事件名）：
-
-```
-Anthropic 私有事件                     →  Pi 统一事件
-─────────────────                    ────────────
-content_block_start (type: "text")    →  text_start
-content_block_delta (text_delta)      →  text_delta
-content_block_start (type: "tool_use") →  toolcall_start
-content_block_delta (input_json)      →  toolcall_delta
-message_delta (stop_reason)           →  done（映射终止原因）
-```
-
-注意终止原因的映射：Anthropic 的 `"end_turn"` → Pi 的 `"stop"`，`"tool_use"` → `"toolUse"`。每个 Provider 的命名都不一样，Pi 统一成了自己的术语。第 3 章讲 Agent Loop 检查 `stopReason` 决定是否继续循环，那些值就是经过这层翻译后的统一术语。
-
-### StreamFunction：翻译器的"入职要求"
-
-前面说的三层架构要运转起来，有一个前提：**所有翻译器必须遵守同一套规则。** Pi 用一个 TypeScript 类型来定义这套规则——它叫 `StreamFunction`，是整个抽象层的"宪法"：
-
-```typescript
-export type StreamFunction<TApi extends Api, TOptions> = (
-  model: Model<TApi>,       // 用哪个模型
-  context: Context,         // 对话上下文（系统提示 + 消息 + 工具）
-  options?: TOptions,       // 可选配置（思考级别、缓存等）
-) => AssistantMessageEventStream;  // ← 必须返回统一事件流
-```
-
-这个签名定义了三条规则：
-
-1. **输入相同**：所有翻译器接受同样的三个参数（model、context、options）
-2. **输出相同**：必须返回 `AssistantMessageEventStream`——不管底层是原始 SSE 还是 SDK 流，对外都是这个类型
-3. **错误不抛异常**：API 调用失败时，不发 `throw`，而是发一个 `{ type: "error" }` 事件
-
-第 3 条呼应了第 3 章的"永不抛出"原则。回忆一下：第 3 章说的 `stopReason: "error"` 和 `"aborted"` 不是模型返回的，而是**翻译器的 catch 块在异常时注入的**。具体来说，翻译器把异常信息包装成一个 `error` 事件，推进事件流里。Agent Loop 收到后用同一套机制处理成功和失败，循环永远不会被异常打断。
-
-有了 StreamFunction 这套规则，"前台"（第一层）可以放心地把工作派给任何翻译器——因为它们保证了同样的输入格式、同样的输出格式、同样的错误处理方式。
+`StreamFunction` 的入职要求则是：接收 `Model`、规范化的 `TranscriptContext` 和选项，返回 `AssistantMessageEventStream`。这是一份协议契约，而不是要求所有翻译器继承某个基类。
 
 ---
 
 ## 三、怎么用：从调用到接入新模型
 
-理解了三层架构，现在看实际使用。分两个场景：**怎么调用**已有模型，和**怎么接入**一个新模型。
+### 场景一：只调用需要的供应商
 
-### 场景一：调用模型
-
-Agent Loop 实际调用的不是 `stream()`，而是 `streamSimple()`。为什么有两个版本？
-
-`stream()` 是底层入口——它只做"查表 + 派活"，不管思考级别翻译。`streamSimple()` 是在 `stream()` 之上包了一层便捷功能——自动处理思考级别（ThinkingLevel）翻译、自动调整 token 上限等。简单说：
-
-- **`stream()`**：最底层，什么便利功能都没有。你直接用它需要自己处理很多翻译细节
-- **`streamSimple()`**：帮你处理好思考级别等翻译工作，是实际开发中常用的入口
-
-Agent Loop 使用 `streamSimple()` 的典型代码：
+下面是一个完整示例。先配置 `ANTHROPIC_API_KEY`；依赖版本固定到本书的 0.87.1。
 
 ```typescript
-const stream = streamSimple(model, context, { reasoning: "high" });
-//                                          ↑ 告诉它"用高级别思考"
-//                                            streamSimple 会自动翻译成各 Provider 的具体参数
+// 完整示例；依赖版本见本书修订记录
+import { createModels } from '@earendil-works/pi-ai';
+import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';
+
+const models = createModels();
+models.setProvider(anthropicProvider());
+const model = models.getModel('anthropic', 'claude-sonnet-4-5');
+if (!model) throw new Error('模型不在已注册目录中');
+
+const stream = models.streamSimple(model, {
+  systemPrompt: 'Explain things clearly.',
+  messages: [{ role: 'user', content: '什么是 Agent Loop？', timestamp: Date.now() }],
+}, { reasoning: 'high' });
 
 for await (const event of stream) {
-  // 事件会按顺序到达：
-  // start → thinking_start/delta/end → text_start/delta/end → done
-  switch (event.type) {
-    case "text_delta":
-      // 文字增量，显示到终端
-      break;
-    case "toolcall_end":
-      // 模型要调工具，拿到完整的工具调用信息
-      break;
-    case "done":
-      // 本轮模型调用结束，看 stopReason 决定是否继续循环
-      break;
-    case "error":
-      // 出错了（网络超时、API错误等），errorReason 是 "error" 或 "aborted"
-      break;
-  }
+  if (event.type === 'text_delta') process.stdout.write(event.delta);
+  if (event.type === 'error') console.error(event.error.errorMessage);
+}
+const result = await stream.result();
+console.log(result.stopReason, result.usage);
+```
+
+为什么不用默认把所有供应商都导进来？只注册需要的 Provider，目录和依赖边界更清楚；API 实现还能懒加载。若你的产品本来就要支持全部内置供应商，用 `builtinModels()` 即可。
+
+`stream()` 接收协议专属选项，`streamSimple()` 接收统一的思考级别等选项，由适配器映射。两者不是“一个有功能、一个没有功能”，也不保证后一种实现永远逐层调用前一种公开函数。
+
+### 场景二：嵌入 coding-agent
+
+独立的 `Models` 不会自动理解 coding-agent 的全部本地配置。`ModelRuntime` 才负责把它们组起来：凭据、`models.json`、内置与扩展 Provider、模型目录和可用性。
+
+```typescript
+// 完整示例；依赖版本见本书修订记录
+import { createAgentSession, ModelRuntime } from '@earendil-works/pi-coding-agent';
+
+const modelRuntime = await ModelRuntime.create();
+const model = modelRuntime.getModel('anthropic', 'claude-sonnet-4-5');
+if (!model) throw new Error('模型未找到');
+
+const { session } = await createAgentSession({ modelRuntime, model });
+try {
+  await session.prompt('解释当前项目的结构。');
+} finally {
+  session.dispose();
 }
 ```
 
-**Agent Loop 不需要关心底层是哪个模型。** 不管 model 是 Claude、GPT 还是 Gemini，`streamSimple` 返回的都是同一种事件流，消费方式完全一样。
+这里把同一个 runtime 交给会话，选模型和真正发请求才能沿用同一份配置。`getModel()` 查到模型并不代表认证一定有效；可用列表还要通过 runtime 的可用性检查。
 
-### 场景二：接入一个新模型
+默认 `createAgentSession()` 会替你创建 runtime；手工传入主要用于自定义认证、配置或共享组合。扩展里保留的 `ctx.modelRegistry` 是兼容视图，不应再把旧 `ModelRegistry.create()` 当成 SDK 的组装中心。
 
-假设你要接入一个 Pi 还不支持的新模型——比如某个国产大模型。你要做什么？
+### 场景三：接入新模型，先判断差异在哪一层
 
-**三步**，每步对应前面讲的三层架构：
+| 新服务的情况 | 需要做什么 |
+|----|----|
+| 已经在内置目录里 | 配认证，选择模型 |
+| 提供现有兼容协议，只是 URL、模型名或头不同 | 用 `models.json`，或组合自定义 Provider |
+| 有自定义目录、OAuth 或请求行为 | 实现/注册 Provider，复用已有 API 实现 |
+| 线上消息协议也不同 | 编写 API 流实现，把响应变成统一事件 |
 
-**第 1 步：写一个翻译器**（对应第三层）
-
-翻译器的本质就是一个符合 `StreamFunction` 签名的函数。你要做的是：
-
-- 把 Pi 的统一消息格式，翻译成你的模型的 API 格式（请求方向）
-- 把你的模型返回的流式响应，翻译成 Pi 的 12 种统一事件（响应方向）
-- 出了异常不要 throw，而是 push 一个 `error` 事件
-
-这一步是工作量最大的——你需要读你的模型的 API 文档，搞清楚它的消息格式、流式协议、错误码。但这是"一次性工作"——写完就不用再改了。
-
-**第 2 步：注册翻译器**（对应第一层）
-
-```typescript
-registerApiProvider({
-  api: "your-model-api",           // 给你的翻译器起个名字
-  stream: yourStreamFunction,       // 你写的翻译器
-  streamSimple: yourSimpleFunction, // 便捷版本
-});
-```
-
-这一步就是往"通讯录"里加一条记录。系统启动后，第一层的 `resolveApiProvider()` 就能查到你的翻译器。
-
-**第 3 步：配置模型信息**
-
-```typescript
-const yourModel: Model = {
-  id: "your-model-id",
-  api: "your-model-api",     // ← 指向第 2 步注册的名字
-  provider: "your-provider",
-  baseUrl: "https://api.your-model.com",
-  // ... 其他元数据（上下文窗口大小、是否支持思考等）
-};
-```
-
-这一步告诉系统"有这样一个模型存在"。`api` 字段指向第 2 步注册的名字，第一层就是靠这个字段查表路由的。
-
-**完成。** Agent Loop 一行都不用改。事件系统、会话管理、压缩算法——全部自动适配。这就是三层架构的价值：**新模型的接入成本被限制在了"写一个翻译器"这一个点，不需要动其他任何地方。**
+大多数企业网关并不需要从头写翻译器。先核对接口格式、认证和模型元数据，把变化限制在真正不同的地方。写新协议时，还必须测试取消、请求准备失败、部分 JSON、工具结果回放等路径；“能返回一句话”还不是完整适配。
 
 ---
 
-## 四、【进阶】翻译器内部：SSE 解析与思考模式方言
+## 四、【进阶】翻译器内部：流式解析与思考模式方言
 
-> 前三节覆盖了 AI 抽象层的核心设计。以下内容属于工程实现细节——如果你不需要自己写翻译器，可以跳过这一节。
+### SDK 帮了忙，不等于适配器没有工作
 
-### 流式传输：为什么 Anthropic 和 OpenAI 的解析方式完全不同？
+v0.87.1 的 Anthropic 实现使用 `@anthropic-ai/sdk`，通过 `client.beta.messages.create(...).asResponse()` 发请求。旧版讲解里“Anthropic 没有 SDK，只能自己解析原始 SSE”的说法已经不成立。
 
-第 3 章讲过，模型回复是流式的——一个字一个字"吐"出来。但"怎么吐"各家不同：
+协议解析和语义转换是两回事。SDK 能把响应变成结构化事件，但 Pi 仍需决定：这段文本属于哪个 content block？工具参数还没输出完时如何维护 partial？何时记录 usage？哪一种 stop reason 对应 toolUse？
 
-**OpenAI** 的 SDK 封装得很好。你调用 `client.chat.completions.create()`，它直接返回一个结构化的 chunk 流。每个 chunk 里的 `choices[0].delta` 就是解析好的数据，拿来就能用。
+所以读这一层时，先找请求构建，再找事件分派，最后找收尾和 catch。沿这三个位置读，比从一个上千行文件第一行一路背到末尾更容易理解。
 
-**Anthropic** 返回的是原始的 SSE（Server-Sent Events）文本流。需要自己逐行读 `event:` 和 `data:` 字段，自己做 JSON 解析（还包含容错处理——有些 chunk 的 JSON 可能不完整）。
-
-```
-Anthropic 的解析链路（翻译器自己做脏活）：
-  原始 HTTP 响应 → 逐行读取 → 分离 event 和 data → JSON 解析(含容错) → 内部事件
-
-OpenAI 的解析链路（SDK 帮你做了脏活）：
-  client.chat.completions.create() → 直接返回 AsyncIterable<Chunk> → 就是结构化数据
-```
-
-**为什么不用统一 SDK？** 因为不是所有 Provider 都有成熟的 SDK。有些 SDK 不支持流式，有些不支持自定义事件。Pi 的策略是——有 SDK 就用（OpenAI、Google），没 SDK 就自己解析（Anthropic）。但不管内部怎么实现，最终都翻译成统一的 12 种事件。
-
-### 思考模式：四种"思考"，四种参数
-
-不同 Provider 对"让模型深度思考"这件事，概念和参数完全不同：
-
-```typescript
-// Anthropic：给一个 token 预算，让模型在这个预算内思考
-params.thinking = { type: "enabled", budget_tokens: 16384 };
-
-// OpenAI：给一个努力程度（low/medium/high）
-params.reasoning_effort = "high";
-
-// Google：用 thinkingConfig 配置
-config.thinkingConfig = { includeThoughts: true, thinkingLevel: "high" };
-```
-
-甚至 Anthropic 自己都有两种模式——新版模型用"自适应思考"（模型自己决定思考多少），旧版模型用"预算思考"（给固定 token 上限）。
-
-### Pi 怎么统一：ThinkingLevel 五级刻度
-
-Pi 定义了一套统一的思考级别枚举：
-
-<Diagram file="/assets/260702-ch04-thinking-levels.svg" caption="ThinkingLevel 五级思考刻度" id="260702-ch04-thinking-levels" />
-
-**配图说明**：顶部数轴展示 off/minimal/low/medium/high/xhigh 六级，每级标注 token 上限。下方三家 Provider 的"high"对应的不同参数。底部展示 clamp 回退策略：先向上找，找不到再向下。
+### 思考级别是一把共同刻度，不是统一 token 预算
 
 ```
-  off    minimal    low    medium    high    xhigh
-  │        │         │       │        │        │
- 不思考  1024 tk   2048 tk  8192 tk  16384 tk  模型最大值
+off → minimal → low → medium → high → xhigh → max
 ```
 
-上层代码只需说 `reasoning: "high"`，翻译器自己查表翻译成各 Provider 的具体参数。每个 `Model` 对象自带一个 `thinkingLevelMap`（翻译表），声明"我这台模型，每个级别对应什么参数"。
+AI 层的 `ThinkingLevel` 不含 off，`ModelThinkingLevel` 在它的基础上加 off。Agent 对外提供的思考设置也允许 off。不同层的类型名字很像，读签名时要看清导入来源。
 
-如果请求的级别模型不支持（比如请求 `xhigh` 但只支持到 `high`），`clampThinkingLevel()` 函数做回退——**先向上找**（思考更多通常比更少安全），找不到再向下找。
+<Diagram file="/assets/260925-ch04-thinking-levels.svg" caption="思考级别、模型能力与协议参数的映射" id="260925-ch04-thinking-levels" />
 
-`streamSimple()` 就是帮你自动完成这套翻译的便捷函数——查表 + clamp + 调整 maxTokens，然后调用底层 `stream()`。
+这个顺序表达的是请求意图，**不是每一格固定消耗多少 token**。Anthropic 可能使用预算或自适应思考，OpenAI 使用 effort，Google 使用自己的 thinking 配置；相同的 high 不意味着计算量相同。
+
+模型的 `thinkingLevelMap` 声明支持情况：null 表示不支持，字符串映射到供应商的值。`xhigh`、`max` 需要模型显式声明支持；无推理能力的模型只暴露 off。
+
+`clampThinkingLevel()` 遇到不支持的级别，先向上找，再向下找。这个回退只是“选一个模型接受的级别”，不是质量或成本保证。产品需要展示可选项时，调用 `getSupportedThinkingLevels(model)`，不要写死七个按钮。
 
 ---
 
 ## 五、【进阶】缓存控制与错误处理
 
-### 缓存控制：让模型"算更少"
+### 缓存：省下重复计算，不省略请求内容
 
-Agent 对话是"有状态的"——每轮都把之前的完整历史发给模型。如果你和 Agent 聊了 50 轮，每轮都重新计算前 49 轮的内容。缓存就是告诉模型服务器："这些内容没变，别重新算了。"
+对话越长，每次请求的历史前缀越大。缓存让服务端复用相同前缀的计算；应用仍然发送当前所需上下文，不能因为“上次发过”就自行删掉消息。
 
-但"怎么标记"各 Provider 不同：Anthropic 在消息块上追加 `cache_control` 标记，Bedrock 插入独立的 `cachePoint` 节点。
+Pi 用 `cacheRetention: "none" | "short" | "long"` 表达意图，各 API 再翻译为实际参数：Anthropic 的 cache_control、Bedrock 的 cachePoint，以及 OpenAI 的 cache key 和模型相关 retention 参数。
 
-Pi 把缓存控制抽象成三个语义级别：
+注意“模型相关”这几个字。0.87.1 的 OpenAI Responses 会根据兼容元数据选择旧的 `prompt_cache_retention`，或新的 `prompt_cache_options`；不能给所有模型都硬塞 `24h`。OpenAI 兼容接口也不自动等于支持 Anthropic 缓存标记。
 
-```typescript
-type CacheRetention = "none" | "short" | "long";
-```
+把它们想成三种记号：在内容上贴便签、在流里插路标、给请求带一个便于路由的编号。记号的形状不同，目的都是提高可复用前缀的收益。
 
-上层只说"我要 long 缓存"，翻译器自己翻译成各 Provider 的具体标记方式。这和 ThinkingLevel 是同一种"统一枚举 + 各家翻译表"的套路，但比思考级别更有意思——**四家对"怎么标记不变内容"这件事，思路完全不同**。源码里的对照表大致是这样：
+每次构建新的 JavaScript 对象不会单独破坏缓存；真正重要的是发出的内容、顺序和服务端策略。命中还受有效期和模型支持影响，因此“字段没变”不是必中的承诺。第 9 章会再讲 coding-agent 的缓存保温，以及它与压缩的区别。
 
-| Provider | `none` | `short` | `long` | 打点位置 |
-|---------|--------|---------|--------|---------|
-| **Anthropic** | 不打标记 | `cache_control: { type: "ephemeral" }`（默认 5 分钟 TTL） | 加 `ttl: "1h"`（仅新模型支持） | system 末尾 + 最后一个 tool + 最后一条 user message（rolling） |
-| **Bedrock** | 不插节点 | 在消息流里插一个独立对象 `{ cachePoint: { type: DEFAULT } }` | 加 `ttl: ONE_HOUR` | system 块后面 + 最后一条消息后面 |
-| **OpenAI Responses** | 不发 cache key | 发送 `prompt_cache_key: sessionId` | 加 `prompt_cache_retention: "24h"` | 不打点——OpenAI 按 session key 自动匹配前缀 |
-| **OpenAI 兼容（DeepSeek/Qwen 等）** | 不打标记 | 按 Anthropic 风格打 `cache_control` | 加 `ttl: "1h"`（如支持） | 复用 Anthropic 的三处策略 |
+### 错误：流内失败与调用层异常要分开
 
-源码引用：Anthropic 的三处打点在 [anthropic-messages.ts:922/929/938](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/anthropic-messages.ts#L922) + [L1208](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/anthropic-messages.ts#L1208) + [L1157](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/anthropic-messages.ts#L1157)；Bedrock 的 cachePoint 节点在 [bedrock-converse-stream.ts:696/885](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/bedrock-converse-stream.ts#L696)；OpenAI Responses 的 prompt_cache_key 在 [openai-responses.ts:229](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-responses.ts#L229)。
+适配器通常把请求失败转换成 `error` 事件，同时在最终 assistant 消息里设置 `stopReason: "error"` 或 `"aborted"`。这样 Loop 能沿统一通道知道这次响应没有完成。
 
-这里有个值得停下来想一下的对比：同样是"告诉服务器这段内容不变"，四家给出了**四种完全不同的协议设计**——
+但不能把它扩大为“调用任何入口都永不抛出”：无效配置、缺少认证等准备错误可能在直接调用时同步抛出；自定义 `streamFn` 也必须遵守自己的契约。Agent Loop 要求它把请求/模型/运行时失败编码成流，调用者则仍要处理启动与配置异常。
 
-- **Anthropic 的做法像"贴便签"**：在原有的内容块上附加一个 `cache_control` 字段。内容还是那些内容，只是多了一个"这段不变"的标签
-- **Bedrock 的做法像"插路标"**：在消息流的特定位置插入一个**独立的、不含业务数据**的 cachePoint 对象。它不依附在任何内容上，自己就是一个占位
-- **OpenAI 原生的做法像"按会员卡号查记录"**：你压根不打标记，只是每次请求带一个 `prompt_cache_key`（Pi 用 sessionId 当 key），OpenAI 后端自己识别前缀重合度
-- **OpenAI 兼容厂商的做法最朴素**：直接抄 Anthropic 的便签协议（`cacheControlFormat: "anthropic"`），所以 Pi 用同一套 `applyAnthropicCacheControl` 函数处理它们
-
-第 3 章我们讨论过"Pi 为什么每圈重建 llmContext 但不会破坏 cache"——答案就在这张表里。`cacheRetention` 一旦设定，整个 Trace 内每圈都用同样的策略打同样的标记（system/tools 内容不变，user message 是 rolling）。Anthropic 后端按内容字节做 prefix 匹配，命中就是命中，跟"你是第几圈调用"无关。
-
-**为什么 Anthropic 选三个特定位置打点？** 不是随便选的——`system + tools` 是整条 Trace 内最稳定的前缀，`最后一条 user message` 是 rolling 的"截止线"。Anthropic 规定每个请求最多 4 个 cache breakpoint，这三个位置覆盖了"完全不变 + 最近滚动"两段，是收益最大化又不超限额的最优解。
-
-缓存的经济价值很高：缓存命中的 token 按缓存读取价计费，通常是正常输入价的 1/10。一个 200K token 的对话历史，缓存后能省约 90% 的输入成本。
-
-### 错误处理：编码到流里，不打断循环
-
-所有翻译器的错误处理都遵循同一个模式：
-
-```typescript
-try {
-  // ... 正常流程：构建请求、发送、解析响应
-  stream.push({ type: "done", reason: output.stopReason, message: output });
-} catch (error) {
-  // 错误不抛出，而是编码到流中
-  output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-  output.errorMessage = error.message;
-  stream.push({ type: "error", reason: output.stopReason, error: output });
-}
-```
-
-**这就是第 3 章说的 `stopReason: "error"` 和 `"aborted"` 的注入点。** 模型 API 本身不会返回这两个值——它们是翻译器的 catch 块在异常时设置的。可能是网络超时、可能是 API Key 过期、可能是用户主动取消。不管什么原因，异常都被包装成事件，Agent Loop 收到后可以重试、降级、或报告给用户，循环不停。
-
-还有一个隐蔽的问题：**上下文溢出**。有时候请求没报错，但模型返回空输出——因为输入 token 太多被服务端静默截断了。Pi 有一个 `isContextOverflow()` 函数做三重检测（错误消息模式匹配、token 数对比、输出为零+length停止），把不同 Provider 的各种溢出表现统一捕获。
+底层收到 error 或 aborted 会结束这一趟运行。要不要重试、是否属于上下文溢出、需不需要压缩，是上层根据错误分类做的决定，不是“错误进了流，循环就永远不停”。
 
 ---
 
 ## 六、回到那一行代码
 
-回到开头的问题：`streamSimple(model, context)` 这一行代码背后发生了什么？
-
-用一句话概括：**Agent Loop 说了一句"给我用这个模型处理这段对话"，前台查出该找哪个翻译器，翻译器把请求翻译成 Provider 的格式发给模型，再把模型的流式响应翻译成统一事件返回——Agent Loop 自始至终只看到了统一事件流，不知道中间发生了多少翻译。**
+现在再看 `streamSimple(model, context)`：
 
 ```
-Agent Loop：streamSimple(model, context, { reasoning: "high" })
-    │
-    │  ① streamSimple 处理思考级别翻译（查表 → clamp → 调整maxTokens）
-    │
-    │  ② 调用 stream() → 前台查表 → 找到翻译器
-    │
-    │  ③ 翻译器工作：
-    │     · 统一格式 → Provider 私有格式（请求翻译）
-    │     · 发给模型
-    │     · Provider 私有响应 → 12种统一事件（响应翻译）
-    │
-    │  ④ 返回 AssistantMessageEventStream
-    │
-    └── Agent Loop：for await (event of stream) { ... }  ← 消费统一事件
+应用表达意图
+  → 上下文归一化
+  → Models / Provider 选择服务与认证
+  → API 实现翻译消息、思考级别、工具与缓存参数
+  → 供应商响应
+  → 统一事件流
+  → Agent Loop 处理消息和工具
 ```
 
-**Agent Loop 看到的只有 ④ ——一个干净的事件流。** 这就是三层架构的力量：复杂度被封装在翻译器里，外部接口保持简洁。
+“翻译公司”的比喻仍然成立，只是现在我们分清了客户经理和翻译员。**Provider 管供应商的事情，API 管协议的事情，Loop 管执行的事情。**
 
-### 设计精华
+值得带走的三个设计方法：
 
-三条核心思路值得带走：
-
-**1. "协议 > 实现"设计法。** Pi 没有设计一个 `BaseProvider` 抽象类让所有翻译器继承，而是定义了一套事件协议（12 种事件）和一个函数签名（`StreamFunction`）。为什么不用继承？因为翻译器之间几乎没有共同点——继承需要找共同代码，但 Anthropic 和 Google 在"发消息"这件事上连字段名都不一样。协议只约定"输入什么、输出什么"，不管中间怎么处理。
-
-**2. "统一枚举 + 映射表"策略。** ThinkingLevel 是统一枚举（5 级），ThinkingLevelMap 让每个 Model 自带翻译表。上层说 `"high"`，底层自己查表。比"取所有 Provider 的交集"灵活（交集可能只剩 `"off"`），也比"暴露各 Provider 的原生参数"简洁（上层不需要知道 20 种参数名）。
-
-**3. "语义统一，实现分散"。** `cacheRetention`（none/short/long）是语义接口——上层说"我要长期缓存"，不管底层是打标记还是插节点。语义接口描述"做什么"，机制接口描述"怎么做"。
+1. **协议先于实现。** 统一输入与流事件，让不同 SDK 都能接入。
+2. **语义刻度与模型能力分开。** high、long 表达调用意图，具体支持范围交给模型元数据。
+3. **把变化留在正确边界。** 换地址不必重写协议，换协议不必重写循环；但每一层的错误和兼容边界都要测试。
 
 ---
 
 ## 七、下一站
 
-AI 层把模型差异封装得干干净净——Agent Loop 完全不知道底层用的是什么模型。
-
-但 Agent 怎么"做事"？模型返回了 `ToolCall`，谁来执行？执行过程中怎么保证参数正确（模型可能传了错误类型的参数）、怎么保证安全（模型可能要求执行危险命令）？第 3 章把这个过程当作黑盒跳过了。
+AI 层把不同供应商的回复变成同一种 ToolCall，可是模型只会要求动作，不能替宿主执行。谁来校验参数、运行工具、报告失败？
 
 下一章，我们打开这个黑盒——工具系统。
 
+
 ---
 
-> **本章关键源码索引**：
-> - `packages/ai/src/compat.ts:237-247` — `stream()` 入口（第一层·底层）
-> - `packages/ai/src/compat.ts:258-268` — `streamSimple()` 入口（第一层·便捷封装）
-> - `packages/ai/src/compat.ts:172-206` — Provider 注册（"通讯录"）
-> - `packages/ai/src/types.ts:304-308` — `StreamFunction` 签名（"宪法"）
-> - `packages/ai/src/types.ts:453-465` — 12 种 `AssistantMessageEvent`（第二层·事件协议）
-> - `packages/ai/src/api/anthropic-messages.ts` — Anthropic 翻译器（第三层·5 步骨架）
-> - `packages/ai/src/api/openai-completions.ts` — OpenAI 翻译器
-> - `packages/ai/src/types.ts:74-76` — `ThinkingLevel` / `ThinkingLevelMap`
-> - `packages/ai/src/models.ts:410-429` — `clampThinkingLevel` 回退策略
-> - `packages/ai/src/utils/overflow.ts:126-155` — `isContextOverflow` 三重检测
+> **本章关键源码索引**（Pi v0.87.1，固定发布提交）：
+> - [packages/ai/src/models.ts](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/ai/src/models.ts) — Models / createModels
+> - [packages/ai/src/compat.ts](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/ai/src/compat.ts) — 全局便捷入口
+> - [packages/ai/src/utils/transcript.ts#L30](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/ai/src/utils/transcript.ts#L30) — normalizeContext
+> - [packages/coding-agent/src/core/model-runtime.ts#L131](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/coding-agent/src/core/model-runtime.ts#L131) — ModelRuntime
+> - [packages/ai/src/api/anthropic-messages.ts](https://github.com/earendil-works/pi/blob/f07218c4d4bbc12bef056a7058c3dd49dfe41abe/packages/ai/src/api/anthropic-messages.ts) — Anthropic 协议实现

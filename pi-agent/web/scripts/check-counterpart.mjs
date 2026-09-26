@@ -8,7 +8,8 @@ import { dirname } from 'node:path';
 import matter from 'gray-matter';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const MODULES_DIR = join(__dirname, '..', 'src', 'content', 'modules');
+// 可选目录参数用于隔离的校验器回归样例。
+const MODULES_DIR = process.argv[2] ?? join(__dirname, '..', 'src', 'content', 'modules');
 
 // gray-matter 解析：返回 { data: frontmatter 对象, content: 正文 }
 function parseFrontmatter(content) {
@@ -19,6 +20,7 @@ function parseFrontmatter(content) {
 const files = readdirSync(MODULES_DIR).filter(f => f.endsWith('.mdx'));
 const errors = [];
 let pythonMissingCount = 0;
+const identityKeys = ['title', 'module', 'displayOrder', 'prev', 'next'];
 const fieldKeysToCompare = [
   'title', 'module', 'displayOrder', 'status', 'summary',
   'prev', 'next', 'keyPoints', 'furtherReading', 'simulator', 'diagrams',
@@ -51,8 +53,7 @@ for (const file of files) {
   const counterpartFile = fm.counterpart + '.mdx';
   const counterpartPath = join(MODULES_DIR, counterpartFile);
   if (!existsSync(counterpartPath)) {
-    // Phase B 决策：Python 版暂缺不视为错误，跳过深比较
-    pythonMissingCount++;
+    errors.push(`[${file}] 声明的 counterpart 不存在：${counterpartFile}`);
     continue;
   }
 
@@ -63,17 +64,31 @@ for (const file of files) {
     continue;
   }
 
+  // Navigation identities must exist in the same series and pair in both languages.
+  for (const key of ['prev', 'next']) {
+    if (!fm[key]) continue;
+    const adjacentPath = join(MODULES_DIR, fm[key].replace(/\.python$/, '') + (fm.variant === 'python' ? '.python' : '') + '.mdx');
+    if (!existsSync(adjacentPath)) errors.push(`[${file}] ${key} 目标不存在：${fm[key]}`);
+    else {
+      const adjacent = parseFrontmatter(readFileSync(adjacentPath, 'utf8'));
+      if ((adjacent.book ?? 'internals') !== (fm.book ?? 'internals')) errors.push(`[${file}] ${key} 跨系列`);
+      const reverse = key === 'prev' ? 'next' : 'prev';
+      if (adjacent[reverse]?.replace(/\.python$/, '') !== file.replace(/(?:\.python)?\.mdx$/, '')) errors.push(`[${file}] ${key} 导航不双向`);
+    }
+  }
+
   // 双向校验
   const mySlug = file.replace(/\.mdx$/, '');
-  // Python 版的 slug 需要还原为 ts slug 用于对方 counterpart 引用
-  const myBaseSlug = mySlug.replace(/\.python$/, '');
-  if (counterpartFm.counterpart !== myBaseSlug && counterpartFm.counterpart !== mySlug) {
+  if (counterpartFm.counterpart !== mySlug) {
     errors.push(`[${file}] 双向 counterpart 不一致：本文件指向 "${fm.counterpart}"，对方指向 "${counterpartFm.counterpart}"`);
     continue;
   }
 
   // 字段深比较（序列化后比对）
-  for (const key of fieldKeysToCompare) {
+  if ((fm.variant ?? 'ts') === (counterpartFm.variant ?? 'ts')) errors.push(`[${file}] counterpart 必须指向另一语言`);
+  if ((fm.book ?? 'internals') !== (counterpartFm.book ?? 'internals')) errors.push(`[${file}] counterpart 不能跨系列`);
+  const sameVersion = (fm.sourceVersion ?? '0.80.2') === (counterpartFm.sourceVersion ?? '0.80.2');
+  for (const key of sameVersion ? fieldKeysToCompare : identityKeys) {
     const a = JSON.stringify(fm[key] ?? null);
     const b = JSON.stringify(counterpartFm[key] ?? null);
     if (a !== b) {

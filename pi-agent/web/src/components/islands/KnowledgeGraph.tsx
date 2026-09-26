@@ -143,7 +143,7 @@ export default function KnowledgeGraph() {
 
   const navigateTo = (node: ModuleNode) => {
     if (node.status === 'published') {
-      window.location.href = `/modules/${node.slug}`;
+      window.location.href = `${import.meta.env.BASE_URL}modules/${node.slug}`;
     }
   };
 

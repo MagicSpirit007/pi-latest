@@ -10,6 +10,7 @@ const modules = defineCollection({
     displayOrder: z.number(),
     status: z.enum(['published', 'draft', 'planned']),
     variant: z.enum(['ts', 'python']).default('ts'),
+    sourceVersion: z.string().optional(),
     counterpart: z.string().optional(),
     // book = 系列：internals（源码精读）/ practice（实战上手）
     book: z.enum(['internals', 'practice']).default('internals'),

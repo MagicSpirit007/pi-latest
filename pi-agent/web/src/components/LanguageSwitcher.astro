@@ -6,8 +6,8 @@
 //
 // Auto-redirect is intentionally NOT implemented: the brief specifies only
 // "click → navigate + save preference". Silent redirects would surprise readers
-// who land on a deep link. The reader's preference is honored by ModuleLink
-// and PrevNextNav (which rewrite in-page links client-side).
+// who land on a deep link. Navigation follows the current page language;
+// the stored preference never rewrites TypeScript chapter links.
 import { getCounterpartUrl, getVariantUrl, type ModuleEntry } from '../utils/collection';
 
 interface Props { entry: ModuleEntry; }

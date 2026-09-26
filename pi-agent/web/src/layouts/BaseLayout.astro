@@ -3,6 +3,7 @@
 import '../styles/base.css';
 import '../styles/prose.css';
 import '../styles/print.css';
+import { withBase } from '../utils/url';
 
 interface Props {
   title: string;
@@ -38,6 +39,6 @@ const { title, description = 'Pi Agent 源码精读笔记' } = Astro.props;
 </head>
 <body>
   <slot />
-  <script src="/js/diagram-linker.js" defer></script>
+  <script src={withBase('/js/diagram-linker.js')} defer></script>
 </body>
 </html>

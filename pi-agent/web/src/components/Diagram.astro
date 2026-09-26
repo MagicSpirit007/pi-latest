@@ -1,4 +1,6 @@
 ---
+import { withBase } from '../utils/url';
+
 // src/components/Diagram.astro
 // 图显示组件（纯 markup）：figure + img + figcaption
 // MDX 使用：<Diagram file="/assets/xxx.svg" caption="..." id="..." darkMode="invert|native|none" />
@@ -27,7 +29,7 @@ const strategy = darkMode || 'invert';
   role="figure"
   aria-label={caption || undefined}
 >
-  <img src={file} alt={caption || ''} loading="lazy" />
+  <img src={withBase(file)} alt={caption || ''} loading="lazy" />
   {caption && <figcaption>{caption}</figcaption>}
 </figure>
 

@@ -1,0 +1,338 @@
+[
+  [
+    1,
+    "packages/coding-agent/src/core/sdk.ts",
+    "createAgentSession",
+    "export async function createAgentSession",
+    175
+  ],
+  [
+    1,
+    "packages/coding-agent/src/core/tools/index.ts",
+    "工具工厂与默认集合",
+    null,
+    null
+  ],
+  [
+    1,
+    "packages/tui/package.json",
+    "pi-tui 的独立依赖",
+    null,
+    null
+  ],
+  [
+    2,
+    "packages/agent/src/types.ts",
+    "AgentMessage 与 AgentTool",
+    null,
+    null
+  ],
+  [
+    2,
+    "packages/coding-agent/src/core/extensions/types.ts",
+    "ToolDefinition",
+    "export interface ToolDefinition",
+    455
+  ],
+  [
+    2,
+    "packages/agent/src/harness/agent-harness.ts",
+    "Harness 独立运行实现",
+    null,
+    null
+  ],
+  [
+    2,
+    "packages/ai/src/index.ts",
+    "AI 包主入口",
+    null,
+    null
+  ],
+  [
+    3,
+    "packages/agent/src/agent-loop.ts",
+    "runAgentLoop / runLoop",
+    "export async function runAgentLoop(",
+    101
+  ],
+  [
+    3,
+    "packages/agent/src/types.ts",
+    "FinishTurn 与请求准备契约",
+    "export type FinishTurn =",
+    151
+  ],
+  [
+    3,
+    "packages/agent/src/agent.ts",
+    "Agent 状态、队列与事件等待",
+    "export class Agent",
+    187
+  ],
+  [
+    3,
+    "packages/coding-agent/src/core/agent-session.ts",
+    "Session 自动后续工作与收尾",
+    null,
+    null
+  ],
+  [
+    4,
+    "packages/ai/src/models.ts",
+    "Models / createModels",
+    null,
+    null
+  ],
+  [
+    4,
+    "packages/ai/src/compat.ts",
+    "全局便捷入口",
+    null,
+    null
+  ],
+  [
+    4,
+    "packages/ai/src/utils/transcript.ts",
+    "normalizeContext",
+    "export function normalizeContext",
+    30
+  ],
+  [
+    4,
+    "packages/coding-agent/src/core/model-runtime.ts",
+    "ModelRuntime",
+    "export class ModelRuntime",
+    131
+  ],
+  [
+    4,
+    "packages/ai/src/api/anthropic-messages.ts",
+    "Anthropic 协议实现",
+    null,
+    null
+  ],
+  [
+    5,
+    "packages/agent/src/agent-loop.ts",
+    "准备、执行、最终处理工具批次",
+    null,
+    null
+  ],
+  [
+    5,
+    "packages/agent/src/types.ts",
+    "AgentTool 与 before/after 契约",
+    null,
+    null
+  ],
+  [
+    5,
+    "packages/coding-agent/src/core/tools/index.ts",
+    "八种内置工具",
+    null,
+    null
+  ],
+  [
+    5,
+    "packages/coding-agent/src/core/tools/powershell.ts",
+    "PowerShell 工具",
+    null,
+    null
+  ],
+  [
+    5,
+    "packages/coding-agent/src/core/extensions/types.ts",
+    "ToolDefinition",
+    "export interface ToolDefinition",
+    455
+  ],
+  [
+    6,
+    "packages/ai/src/types.ts",
+    "SystemMessage 与四种标准 Message",
+    "export interface SystemMessage",
+    491
+  ],
+  [
+    6,
+    "packages/ai/src/utils/transcript.ts",
+    "系统内容追加、sections 与工具重放",
+    "export function getCurrentSystemMessage",
+    73
+  ],
+  [
+    6,
+    "packages/coding-agent/src/core/messages.ts",
+    "convertToLlm 与自定义消息",
+    null,
+    null
+  ],
+  [
+    6,
+    "packages/agent/src/types.ts",
+    "CustomAgentMessages 声明扩展",
+    null,
+    null
+  ],
+  [
+    7,
+    "packages/agent/src/agent.ts",
+    "Agent.subscribe 与事件等待",
+    null,
+    null
+  ],
+  [
+    7,
+    "packages/coding-agent/src/core/agent-session.ts",
+    "事件翻译、边界提交、普通订阅",
+    null,
+    null
+  ],
+  [
+    7,
+    "packages/coding-agent/src/core/extensions/runner.ts",
+    "扩展派发、emitBoundary、emitContext",
+    null,
+    null
+  ],
+  [
+    7,
+    "packages/coding-agent/src/core/extensions/types.ts",
+    "边界草稿与扩展事件类型",
+    null,
+    null
+  ],
+  [
+    8,
+    "packages/coding-agent/src/core/resource-loader.ts",
+    "项目指令优先级与资源信任",
+    null,
+    null
+  ],
+  [
+    8,
+    "packages/coding-agent/src/core/system-prompt.ts",
+    "结构化提示词",
+    "export function buildSystemPromptSections",
+    121
+  ],
+  [
+    8,
+    "packages/coding-agent/src/core/tools/truncate.ts",
+    "truncateHead / truncateTail",
+    null,
+    null
+  ],
+  [
+    8,
+    "packages/coding-agent/src/core/skills.ts",
+    "Skill 清单与按需加载",
+    null,
+    null
+  ],
+  [
+    8,
+    "packages/coding-agent/src/core/compaction/branch-summarization.ts",
+    "分支路径收集与摘要生成",
+    null,
+    null
+  ],
+  [
+    9,
+    "packages/coding-agent/src/core/compaction/compaction.ts",
+    "prepareCompaction",
+    "export function prepareCompaction",
+    894
+  ],
+  [
+    9,
+    "packages/coding-agent/src/core/compaction/compaction.ts",
+    "投影上的切割算法",
+    "function findProjectedCutPoint",
+    824
+  ],
+  [
+    9,
+    "packages/coding-agent/src/core/compaction/compaction.ts",
+    "投影 token 估算",
+    "export function estimateProjectedContextTokens",
+    249
+  ],
+  [
+    9,
+    "packages/coding-agent/src/core/settings-manager.ts",
+    "压缩的模型覆盖配置",
+    null,
+    null
+  ],
+  [
+    9,
+    "packages/coding-agent/src/core/agent-session.ts",
+    "压缩触发、溢出恢复与重试",
+    null,
+    null
+  ],
+  [
+    9,
+    "packages/coding-agent/src/core/cache-warmer.ts",
+    "提示词缓存保温与用量",
+    null,
+    null
+  ],
+  [
+    10,
+    "packages/coding-agent/src/core/session-manager.ts",
+    "SessionEntry",
+    "export type SessionEntry =",
+    183
+  ],
+  [
+    10,
+    "packages/coding-agent/src/core/session-manager.ts",
+    "buildSessionProjection",
+    "export function buildSessionProjection",
+    543
+  ],
+  [
+    10,
+    "packages/coding-agent/src/core/session-manager.ts",
+    "追加式上下文编辑",
+    "\tappendContextEdit(",
+    1358
+  ],
+  [
+    10,
+    "packages/coding-agent/src/core/session-manager.ts",
+    "SessionManager 持久化与分支",
+    "export class SessionManager",
+    987
+  ],
+  [
+    10,
+    "packages/agent/src/harness/session/types.ts",
+    "Harness Storage / SessionRepo",
+    null,
+    null
+  ],
+  [
+    10,
+    "packages/agent/src/harness/session/session.ts",
+    "StorageBackedSession",
+    null,
+    null
+  ],
+  [
+    10,
+    "packages/agent/src/harness/session/jsonl/index.ts",
+    "JsonlSessionRepo",
+    null,
+    null
+  ],
+  [
+    10,
+    "packages/agent/src/harness/session/memory.ts",
+    "MemorySessionRepo",
+    null,
+    null
+  ]
+]
